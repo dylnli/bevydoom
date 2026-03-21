@@ -52,11 +52,15 @@ impl fmt::Debug for WadName {
 }
 
 impl From<&[u8]> for WadName {
-    fn from(s: &[u8]) -> Self { Self::from_slice(s) }
+    fn from(s: &[u8]) -> Self {
+        Self::from_slice(s)
+    }
 }
 
 impl From<&str> for WadName {
-    fn from(s: &str) -> Self { Self::from_str(s) }
+    fn from(s: &str) -> Self {
+        Self::from_str(s)
+    }
 }
 
 // HEADER
@@ -115,7 +119,7 @@ impl Thing {
     pub fn from_raw(r: RawThing) -> Self {
         Self {
             position: IVec2::new(r.x as i32, r.y as i32),
-            angle: r.angle as f32 * (PI / 180.0),
+            angle: (r.angle as f32).to_radians(),
             thing_type: r.thing_type as i32,
             flags: r.flags as u32,
         }
@@ -162,6 +166,10 @@ impl Linedef {
             front_sidedef: r.front_sidedef as i32,
             back_sidedef: r.back_sidedef as i32,
         }
+    }
+
+    pub fn is_two_sided(&self) -> bool {
+        self.back_sidedef != -1
     }
 }
 
@@ -230,7 +238,7 @@ pub struct Vertex(pub IVec2);
 
 impl Vertex {
     pub fn from_raw(r: RawVertex) -> Self {
-        Self(IVec2::new(r.x as i32, r.y as i32))
+        Self(IVec2::new(r.x as i32, -r.y as i32))
     }
 }
 

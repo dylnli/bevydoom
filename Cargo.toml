@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
-bevy = "0.18.1"
+bevy = { version = "0.18.1", features = ["free_camera"] }
 bytemuck = "1.25.0"
