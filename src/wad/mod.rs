@@ -43,46 +43,18 @@ impl WadFile {
         })
     }
 
-    pub fn find_lump(&self, name: &str) -> Option<usize> {
+    pub fn find_lump(&self, name: WadName) -> Option<usize> {
         return self
             .directory
             .iter()
             .enumerate()
             .rev()
-            .find_map(|(i, entry)| if entry.name == WadName::from(name) { Some(i) } else { None });
+            .find_map(|(i, entry)| if entry.name == name { Some(i) } else { None });
     }
 
     pub fn load_lump(&self, index: usize) -> &[u8] {
         let lump_entry = &self.directory[index];
         return &self.bytes[lump_entry.offset..lump_entry.offset + lump_entry.size];
-    }
-
-    pub fn load_map(&self, name: &str) -> Option<Map> {
-        let map_index = self.find_lump(name)?;
-
-        let things = Self::bytes_to_vec::<Thing, RawThing>(self.load_lump(map_index + 1));
-        let linedefs = Self::bytes_to_vec::<Linedef, RawLinedef>(self.load_lump(map_index + 2));
-        let sidedefs = Self::bytes_to_vec::<Sidedef, RawSidedef>(self.load_lump(map_index + 3));
-        let vertices = Self::bytes_to_vec::<Vertex, RawVertex>(self.load_lump(map_index + 4));
-        let segs = Vec::from(self.load_lump(map_index + 5));
-        let subsectors = Vec::from(self.load_lump(map_index + 6));
-        let nodes = Vec::from(self.load_lump(map_index + 7));
-        let sectors = Self::bytes_to_vec::<Sector, RawSector>(self.load_lump(map_index + 8));
-        let reject = Vec::from(self.load_lump(map_index + 9));
-        let blockmap = Vec::from(self.load_lump(map_index + 10));
-
-        Some(Map {
-            things,
-            linedefs,
-            sidedefs,
-            vertices,
-            segs,
-            subsectors,
-            nodes,
-            sectors,
-            reject,
-            blockmap,
-        })
     }
 
     pub fn bytes_to_vec<T: From<R>, R: Pod>(bytes: &[u8]) -> Vec<T> {

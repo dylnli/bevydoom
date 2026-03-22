@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, fmt};
+use std::fmt;
 
 use bevy::math::IVec2;
 use bytemuck::{Pod, Zeroable};
@@ -111,16 +111,16 @@ pub struct RawLumpEntry {
 pub struct Thing {
     pub position: IVec2,
     pub angle: f32,
-    pub thing_type: i32,
+    pub thing_type: u32,
     pub flags: u32,
 }
 
 impl Thing {
     pub fn from_raw(r: RawThing) -> Self {
         Self {
-            position: IVec2::new(r.x as i32, r.y as i32),
-            angle: (r.angle as f32).to_radians(),
-            thing_type: r.thing_type as i32,
+            position: from_doom_coords(r.x, r.y),
+            angle: from_doom_angle(r.angle),
+            thing_type: r.thing_type as u32,
             flags: r.flags as u32,
         }
     }
@@ -138,7 +138,7 @@ pub struct RawThing {
     pub x: i16,
     pub y: i16,
     pub angle: i16,
-    pub thing_type: i16,
+    pub thing_type: u16,
     pub flags: u16,
 }
 
@@ -146,30 +146,30 @@ pub struct RawThing {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Linedef {
-    pub start_vertex: i32,
-    pub end_vertex: i32,
+    pub start_vertex: u32,
+    pub end_vertex: u32,
     pub flags: u32,
-    pub special: i32,
-    pub tag: i32,
-    pub front_sidedef: i32,
-    pub back_sidedef: i32,
+    pub special: u32,
+    pub tag: u32,
+    pub front_sidedef: u32,
+    pub back_sidedef: Option<u32>,
 }
 
 impl Linedef {
     pub fn from_raw(r: RawLinedef) -> Self {
         Self {
-            start_vertex: r.start_vertex as i32,
-            end_vertex: r.end_vertex as i32,
+            start_vertex: r.start_vertex as u32,
+            end_vertex: r.end_vertex as u32,
             flags: r.flags as u32,
-            special: r.special as i32,
-            tag: r.tag as i32,
-            front_sidedef: r.front_sidedef as i32,
-            back_sidedef: r.back_sidedef as i32,
+            special: r.special as u32,
+            tag: r.tag as u32,
+            front_sidedef: r.front_sidedef as u32,
+            back_sidedef: if r.back_sidedef != 0xFFFF {
+                Some(r.back_sidedef as u32)
+            } else {
+                None
+            },
         }
-    }
-
-    pub fn is_two_sided(&self) -> bool {
-        self.back_sidedef != -1
     }
 }
 
@@ -182,13 +182,13 @@ impl From<RawLinedef> for Linedef {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct RawLinedef {
-    pub start_vertex: i16,
-    pub end_vertex: i16,
+    pub start_vertex: u16,
+    pub end_vertex: u16,
     pub flags: u16,
-    pub special: i16,
-    pub tag: i16,
-    pub front_sidedef: i16,
-    pub back_sidedef: i16,
+    pub special: u16,
+    pub tag: u16,
+    pub front_sidedef: u16,
+    pub back_sidedef: u16,
 }
 
 // SIDEDEF
@@ -199,17 +199,17 @@ pub struct Sidedef {
     pub upper_texture: WadName,
     pub lower_texture: WadName,
     pub middle_texture: WadName,
-    pub sector: i32,
+    pub sector: u32,
 }
 
 impl Sidedef {
     pub fn from_raw(r: RawSidedef) -> Self {
         Self {
-            offset: IVec2::new(r.x_offset as i32, r.y_offset as i32),
+            offset: IVec2::new(r.x_offset as i32, r.y_offset as i32), // TODO: Check coords
             upper_texture: WadName::from_slice(&r.upper_texture),
             lower_texture: WadName::from_slice(&r.upper_texture),
             middle_texture: WadName::from_slice(&r.upper_texture),
-            sector: r.sector as i32,
+            sector: r.sector as u32,
         }
     }
 }
@@ -228,7 +228,7 @@ pub struct RawSidedef {
     pub upper_texture: [u8; 8],
     pub lower_texture: [u8; 8],
     pub middle_texture: [u8; 8],
-    pub sector: i16,
+    pub sector: u16,
 }
 
 // VERTEX
@@ -238,7 +238,7 @@ pub struct Vertex(pub IVec2);
 
 impl Vertex {
     pub fn from_raw(r: RawVertex) -> Self {
-        Self(IVec2::new(r.x as i32, -r.y as i32))
+        Self(from_doom_coords(r.x, r.y))
     }
 }
 
@@ -264,8 +264,8 @@ pub struct Sector {
     pub floor_texture: WadName,
     pub ceiling_texture: WadName,
     pub light_level: u8,
-    pub special: i32,
-    pub tag: i32,
+    pub special: u32,
+    pub tag: u32,
 }
 
 impl Sector {
@@ -276,8 +276,8 @@ impl Sector {
             floor_texture: WadName::from_slice(&r.floor_texture),
             ceiling_texture: WadName::from_slice(&r.ceiling_texture),
             light_level: r.light_level as u8,
-            special: r.special as i32,
-            tag: r.tag as i32,
+            special: r.special as u32,
+            tag: r.tag as u32,
         }
     }
 }
@@ -296,22 +296,21 @@ pub struct RawSector {
     pub floor_texture: [u8; 8],
     pub ceiling_texture: [u8; 8],
     pub light_level: u16,
-    pub special: i16,
-    pub tag: i16,
+    pub special: u16,
+    pub tag: u16,
 }
 
-// MAP
+// HELPER FUNCTIONS
 
-#[derive(Debug, Clone)]
-pub struct Map {
-    pub things: Vec<Thing>,
-    pub linedefs: Vec<Linedef>,
-    pub sidedefs: Vec<Sidedef>,
-    pub vertices: Vec<Vertex>,
-    pub segs: Vec<u8>,
-    pub subsectors: Vec<u8>,
-    pub nodes: Vec<u8>,
-    pub sectors: Vec<Sector>,
-    pub reject: Vec<u8>,
-    pub blockmap: Vec<u8>,
+fn from_doom_coords(x: i16, y: i16) -> IVec2 {
+    // Flip Y from north to south
+    IVec2::new(x as i32, -y as i32)
+}
+
+fn from_doom_angle(angle: i16) -> f32 {
+    // Rotate from 0 degrees = east to 0 degrees = north
+    let realign = angle as f32 - 90.0;
+    // Round to nearest 45 degrees
+    let rounded = (realign / 45.0).round();
+    rounded * std::f32::consts::FRAC_PI_4
 }
