@@ -255,6 +255,78 @@ pub struct RawVertex {
     pub y: i16,
 }
 
+// SEG
+
+#[derive(Debug, Clone, Copy)]
+pub struct Seg {
+    pub start_vertex: u32,
+    pub end_vertex: u32,
+    pub angle: i32,
+    pub linedef: u32,
+    pub direction: i32,
+    pub offset: i32,
+}
+
+impl Seg {
+    pub fn from_raw(r: RawSeg) -> Self {
+        Self {
+            start_vertex: r.start_vertex as u32,
+            end_vertex: r.end_vertex as u32,
+            angle: r.angle as i32, // TODO: Convert to f32
+            linedef: r.linedef as u32,
+            direction: r.direction as i32,
+            offset: r.offset as i32,
+        }
+    }
+}
+
+impl From<RawSeg> for Seg {
+    fn from(r: RawSeg) -> Self {
+        Self::from_raw(r)
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+pub struct RawSeg {
+    pub start_vertex: u16,
+    pub end_vertex: u16,
+    pub angle: i16,
+    pub linedef: u16,
+    pub direction: i16,
+    pub offset: i16,
+}
+
+// SUBSECTOR
+
+#[derive(Debug, Clone, Copy)]
+pub struct Subsector {
+    pub num_segs: u32,
+    pub first_seg: u32,
+}
+
+impl Subsector {
+    pub fn from_raw(r: RawSubsector) -> Self {
+        Self {
+            num_segs: r.num_segs as u32,
+            first_seg: r.first_seg as u32,
+        }
+    }
+}
+
+impl From<RawSubsector> for Subsector {
+    fn from(r: RawSubsector) -> Self {
+        Self::from_raw(r)
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+pub struct RawSubsector {
+    pub num_segs: u16,
+    pub first_seg: u16,
+}
+
 // SECTOR
 
 #[derive(Debug, Clone, Copy)]

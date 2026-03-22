@@ -1,4 +1,7 @@
-use bevy::{math::IVec2, mesh::Mesh};
+use bevy::{
+    math::{IVec2, Vec2},
+    mesh::Mesh,
+};
 
 use crate::wad::{WadFile, types::*};
 
@@ -9,6 +12,8 @@ pub struct Map {
     pub linedefs: Vec<Linedef>,
     pub sidedefs: Vec<Sidedef>,
     pub vertices: Vec<Vertex>,
+    pub segs: Vec<Seg>,
+    pub subsectors: Vec<Subsector>,
     pub sectors: Vec<Sector>,
 }
 
@@ -20,6 +25,9 @@ impl Map {
         let linedefs = WadFile::bytes_to_vec::<Linedef, RawLinedef>(wad.load_lump(map_index + 2));
         let sidedefs = WadFile::bytes_to_vec::<Sidedef, RawSidedef>(wad.load_lump(map_index + 3));
         let vertices = WadFile::bytes_to_vec::<Vertex, RawVertex>(wad.load_lump(map_index + 4));
+        let segs = WadFile::bytes_to_vec::<Seg, RawSeg>(wad.load_lump(map_index + 5));
+        let subsectors =
+            WadFile::bytes_to_vec::<Subsector, RawSubsector>(wad.load_lump(map_index + 6));
         let sectors = WadFile::bytes_to_vec::<Sector, RawSector>(wad.load_lump(map_index + 8));
 
         Some(Map {
@@ -28,6 +36,8 @@ impl Map {
             linedefs,
             sidedefs,
             vertices,
+            segs,
+            subsectors,
             sectors,
         })
     }
@@ -130,6 +140,70 @@ impl Map {
                     [1.0, 0.0, 0.0, 1.0],
                 );
             }
+        }
+
+        // Floors and ceilings
+
+        for subsector in &self.subsectors {
+            // Get subsector sector
+            let seg = self.segs[subsector.first_seg as usize];
+            let linedef = self.linedefs[seg.linedef as usize];
+            let sidedef_index = if seg.direction == 0 {
+                linedef.front_sidedef
+            } else {
+                linedef.back_sidedef.unwrap()
+            };
+            let sidedef = self.sidedefs[sidedef_index as usize];
+            let sector = self.sectors[sidedef.sector as usize];
+
+            let mut poly_vertices = Vec::with_capacity(subsector.num_segs as usize);
+            for i in 0..subsector.num_segs {
+                let seg = self.segs[(subsector.first_seg + i) as usize];
+                poly_vertices.push(Vec2::new(
+                    self.vertices[seg.start_vertex as usize].0.x as f32,
+                    self.vertices[seg.start_vertex as usize].0.y as f32,
+                ));
+            }
+
+            if poly_vertices.len() < 3 {
+                continue;
+            }
+
+            // Floor
+            let floor_start_index = vertices.len();
+            let floor_vertices: Vec<[f32; 3]> = poly_vertices
+                .iter()
+                .map(|v| [v.x, sector.floor_height as f32, v.y])
+                .collect();
+            let floor_vertex_colors = vec![[1.0, 1.0, 0.0, 1.0]; floor_vertices.len()];
+            let mut floor_indices: Vec<u32> = Vec::with_capacity((floor_vertices.len() - 2) * 3);
+            for i in 1..(floor_vertices.len() - 1) {
+                floor_indices.push(floor_start_index as u32);
+                floor_indices.push((floor_start_index + i) as u32);
+                floor_indices.push((floor_start_index + i) as u32 + 1);
+            }
+
+            vertices.extend(floor_vertices);
+            vertex_colors.extend(floor_vertex_colors);
+            indices.extend(floor_indices);
+
+            // Ceiling
+            let ceiling_start_index = vertices.len();
+            let ceiling_vertices: Vec<[f32; 3]> = poly_vertices
+                .iter()
+                .map(|v| [v.x, sector.ceiling_height as f32, v.y])
+                .collect();
+            let ceiling_vertex_colors = vec![[1.0, 0.0, 1.0, 1.0]; ceiling_vertices.len()];
+            let mut ceiling_indices: Vec<u32> = Vec::with_capacity((ceiling_vertices.len() - 2) * 3);
+            for i in 1..(ceiling_vertices.len() - 1) {
+                ceiling_indices.push(ceiling_start_index as u32);
+                ceiling_indices.push((ceiling_start_index + i) as u32);
+                ceiling_indices.push((ceiling_start_index + i) as u32 + 1);
+            }
+
+            vertices.extend(ceiling_vertices);
+            vertex_colors.extend(ceiling_vertex_colors);
+            indices.extend(ceiling_indices);
         }
 
         use bevy::{

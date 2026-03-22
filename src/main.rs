@@ -49,13 +49,14 @@ fn setup(
 
     let wad = WadFile::load(&args.0[1])?;
 
-    let map = Map::load(&wad, WadName::from("E1M1")).unwrap();
+    let map = Map::load(&wad, WadName::from("E1M3")).unwrap();
 
     commands.insert_resource(wad);
 
     let unlit_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         unlit: true,
+        cull_mode: None,
         ..default()
     });
 
@@ -77,7 +78,7 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_y(player_thing.angle)).with_translation(
             Vec3::new(
                 player_thing.position.x as f32,
-                56.0,
+                56.0, // Add sector floor height
                 player_thing.position.y as f32,
             ),
         ),
