@@ -103,28 +103,21 @@ impl Map {
                 let back_sidedef = self.sidedefs[back_sidedef as usize];
                 let back_sector = self.sectors[back_sidedef.sector as usize];
 
-                // TODO: Check if sectors are static geometry before culling
-                let add_top_wall = front_sector.ceiling_height > back_sector.ceiling_height;
-                let add_bottom_wall = front_sector.floor_height < back_sector.floor_height;
-
-                if add_top_wall {
-                    add_wall(
-                        start_vertex.0,
-                        end_vertex.0,
-                        front_sector.ceiling_height,
-                        back_sector.ceiling_height,
-                        [0.0, 1.0, 0.0, 1.0],
-                    );
-                }
-                if add_bottom_wall {
-                    add_wall(
-                        start_vertex.0,
-                        end_vertex.0,
-                        back_sector.floor_height,
-                        front_sector.floor_height,
-                        [0.0, 0.0, 1.0, 1.0],
-                    );
-                }
+                // TODO: Generate correct winding based on height and two quads per wall for dynamic geometry
+                add_wall(
+                    start_vertex.0,
+                    end_vertex.0,
+                    front_sector.ceiling_height,
+                    back_sector.ceiling_height,
+                    [0.0, 1.0, 0.0, 1.0],
+                );
+                add_wall(
+                    start_vertex.0,
+                    end_vertex.0,
+                    back_sector.floor_height,
+                    front_sector.floor_height,
+                    [0.0, 0.0, 1.0, 1.0],
+                );
             } else {
                 // One sided
                 let start_vertex = self.vertices[linedef.start_vertex as usize];
@@ -156,22 +149,56 @@ impl Map {
             let sidedef = self.sidedefs[sidedef_index as usize];
             let sector = self.sectors[sidedef.sector as usize];
 
-            let mut poly_vertices = Vec::with_capacity(subsector.num_segs as usize);
+            // Get convex hull points
+            let mut hull_indices = Vec::with_capacity(subsector.num_segs as usize);
             for i in 0..subsector.num_segs {
                 let seg = self.segs[(subsector.first_seg + i) as usize];
-                poly_vertices.push(Vec2::new(
-                    self.vertices[seg.start_vertex as usize].0.x as f32,
-                    self.vertices[seg.start_vertex as usize].0.y as f32,
-                ));
+                if i == 0 || hull_indices[i as usize - 1] != seg.start_vertex {
+                    hull_indices.push(seg.start_vertex);
+                }
+                if i == 0 || hull_indices[0] != seg.end_vertex {
+                    hull_indices.push(seg.end_vertex);
+                }
             }
 
-            if poly_vertices.len() < 3 {
+            if hull_indices.len() < 3 {
                 continue;
             }
 
+            let mut hull_vertices: Vec<Vec2> = hull_indices
+                .iter()
+                .map(|&i| {
+                    Vec2::new(
+                        self.vertices[i as usize].0.x as f32,
+                        self.vertices[i as usize].0.y as f32,
+                    )
+                })
+                .collect();
+
+            // Sort hull points CCW
+            let (pivot_index, &pivot_point) = hull_vertices
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)))
+                .unwrap();
+            hull_vertices.swap(0, pivot_index);
+            hull_vertices[1..].sort_by(|a, b| {
+                let cross = (a - pivot_point).perp_dot(b - pivot_point);
+                if cross > 0.0 {
+                    std::cmp::Ordering::Less
+                } else if cross < 0.0 {
+                    std::cmp::Ordering::Greater
+                } else {
+                    // Collinear, sort by distance from pivot
+                    let da = a.distance_squared(pivot_point);
+                    let db = b.distance_squared(pivot_point);
+                    da.total_cmp(&db)
+                }
+            });
+
             // Floor
             let floor_start_index = vertices.len();
-            let floor_vertices: Vec<[f32; 3]> = poly_vertices
+            let floor_vertices: Vec<[f32; 3]> = hull_vertices
                 .iter()
                 .map(|v| [v.x, sector.floor_height as f32, v.y])
                 .collect();
@@ -179,8 +206,8 @@ impl Map {
             let mut floor_indices: Vec<u32> = Vec::with_capacity((floor_vertices.len() - 2) * 3);
             for i in 1..(floor_vertices.len() - 1) {
                 floor_indices.push(floor_start_index as u32);
-                floor_indices.push((floor_start_index + i) as u32);
                 floor_indices.push((floor_start_index + i) as u32 + 1);
+                floor_indices.push((floor_start_index + i) as u32);
             }
 
             vertices.extend(floor_vertices);
@@ -189,12 +216,13 @@ impl Map {
 
             // Ceiling
             let ceiling_start_index = vertices.len();
-            let ceiling_vertices: Vec<[f32; 3]> = poly_vertices
+            let ceiling_vertices: Vec<[f32; 3]> = hull_vertices
                 .iter()
                 .map(|v| [v.x, sector.ceiling_height as f32, v.y])
                 .collect();
             let ceiling_vertex_colors = vec![[1.0, 0.0, 1.0, 1.0]; ceiling_vertices.len()];
-            let mut ceiling_indices: Vec<u32> = Vec::with_capacity((ceiling_vertices.len() - 2) * 3);
+            let mut ceiling_indices: Vec<u32> =
+                Vec::with_capacity((ceiling_vertices.len() - 2) * 3);
             for i in 1..(ceiling_vertices.len() - 1) {
                 ceiling_indices.push(ceiling_start_index as u32);
                 ceiling_indices.push((ceiling_start_index + i) as u32);
