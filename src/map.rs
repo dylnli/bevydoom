@@ -1,7 +1,4 @@
-use bevy::{
-    math::{IVec2, Vec2},
-    mesh::Mesh,
-};
+use bevy::{math::IVec2, mesh::Mesh};
 
 use crate::wad::{WadFile, types::*};
 
@@ -94,14 +91,14 @@ impl Map {
         };
 
         for linedef in &self.linedefs {
-            if let Some(back_sidedef) = linedef.back_sidedef {
+            if let Some(back_sidedef_i) = linedef.back_sidedef_i {
                 // Two sided
-                let start_vertex = self.vertices[linedef.start_vertex as usize];
-                let end_vertex = self.vertices[linedef.end_vertex as usize];
-                let front_sidedef = self.sidedefs[linedef.front_sidedef as usize];
-                let front_sector = self.sectors[front_sidedef.sector as usize];
-                let back_sidedef = self.sidedefs[back_sidedef as usize];
-                let back_sector = self.sectors[back_sidedef.sector as usize];
+                let start_vertex = self.vertices[linedef.start_vertex_i as usize];
+                let end_vertex = self.vertices[linedef.end_vertex_i as usize];
+                let front_sidedef = self.sidedefs[linedef.front_sidedef_i as usize];
+                let front_sector = self.sectors[front_sidedef.sector_i as usize];
+                let back_sidedef = self.sidedefs[back_sidedef_i as usize];
+                let back_sector = self.sectors[back_sidedef.sector_i as usize];
 
                 // TODO: Generate correct winding based on height and two quads per wall for dynamic geometry
                 add_wall(
@@ -120,10 +117,10 @@ impl Map {
                 );
             } else {
                 // One sided
-                let start_vertex = self.vertices[linedef.start_vertex as usize];
-                let end_vertex = self.vertices[linedef.end_vertex as usize];
-                let sidedef = self.sidedefs[linedef.front_sidedef as usize];
-                let sector = self.sectors[sidedef.sector as usize];
+                let start_vertex = self.vertices[linedef.start_vertex_i as usize];
+                let end_vertex = self.vertices[linedef.end_vertex_i as usize];
+                let sidedef = self.sidedefs[linedef.front_sidedef_i as usize];
+                let sector = self.sectors[sidedef.sector_i as usize];
 
                 add_wall(
                     start_vertex.0,
@@ -137,100 +134,179 @@ impl Map {
 
         // Floors and ceilings
 
-        for subsector in &self.subsectors {
-            // Get subsector sector
-            let seg = self.segs[subsector.first_seg as usize];
-            let linedef = self.linedefs[seg.linedef as usize];
-            let sidedef_index = if seg.direction == 0 {
-                linedef.front_sidedef
-            } else {
-                linedef.back_sidedef.unwrap()
-            };
-            let sidedef = self.sidedefs[sidedef_index as usize];
-            let sector = self.sectors[sidedef.sector as usize];
+        let num_sectors = self.sectors.len();
 
-            // Get convex hull points
-            let mut hull_indices = Vec::with_capacity(subsector.num_segs as usize);
-            for i in 0..subsector.num_segs {
-                let seg = self.segs[(subsector.first_seg + i) as usize];
-                if i == 0 || hull_indices[i as usize - 1] != seg.start_vertex {
-                    hull_indices.push(seg.start_vertex);
-                }
-                if i == 0 || hull_indices[0] != seg.end_vertex {
-                    hull_indices.push(seg.end_vertex);
-                }
+        // Array of array for each sector, each sector array is array of edges + if visited
+        let mut collected_sector_edges: Vec<Vec<(u32, u32, bool)>> = vec![Vec::new(); num_sectors];
+        for linedef in &self.linedefs {
+            let front_sidedef = self.sidedefs[linedef.front_sidedef_i as usize];
+            let front_sector_i = front_sidedef.sector_i as usize;
+            collected_sector_edges[front_sector_i].push((
+                linedef.start_vertex_i,
+                linedef.end_vertex_i,
+                false,
+            ));
+
+            if let Some(back_sidedef_i) = linedef.back_sidedef_i {
+                let back_sidedef = self.sidedefs[back_sidedef_i as usize];
+                let back_sector_i = back_sidedef.sector_i as usize;
+                collected_sector_edges[back_sector_i].push((
+                    linedef.end_vertex_i,
+                    linedef.start_vertex_i,
+                    false,
+                ));
             }
+        }
 
-            if hull_indices.len() < 3 {
-                continue;
+        println!("{:?}", collected_sector_edges);
+
+        // Array of array for each sector, each sector array is array of loops (array of vertex indices);
+        let mut sector_loops_vec: Vec<Vec<Vec<u32>>> = vec![Vec::new(); num_sectors];
+        for sector_i in 0..num_sectors {
+            let sector_edges = &mut collected_sector_edges[sector_i];
+            println!("NEW SECTOR {:?}", sector_edges);
+            let sector_loops = &mut sector_loops_vec[sector_i];
+            let num_edges = sector_edges.len();
+            bevy::log::info!("NUM EDGES {}", num_edges);
+            for i in 0..num_edges {
+                let start_edge = sector_edges[i];
+                if start_edge.2 {
+                    // Already visited
+                    continue;
+                }
+                sector_edges[i].2 = true;
+
+                println!("START EDGE {} {}", start_edge.0, start_edge.1);
+
+                // Encountering new loop
+                let mut new_loop = Vec::new();
+                new_loop.extend([start_edge.0, start_edge.1]);
+
+                // Find all connected edges
+                let rest_edges = &mut sector_edges[i + 1..];
+                let rest_edges_len = rest_edges.len();
+                println!("SEARCH START FROM {}", i + 1);
+                for _ in 0..rest_edges_len {
+                    for rest_i in 0..rest_edges_len {
+                        let new_edge = &mut rest_edges[rest_i];
+                        if new_edge.2 {
+                            continue;
+                        }
+
+                        if new_edge.0 == *new_loop.last().unwrap() {
+                            println!("NEW EDGE {} {}", new_edge.0, new_edge.1);
+                            bevy::log::info!("FOUND NEW EDGE");
+                            new_edge.2 = true;
+                            // New edge
+                            if new_edge.1 == start_edge.0 {
+                                // Closed loop
+                                break;
+                            }
+
+                            new_loop.push(new_edge.1);
+                        }
+                    }
+                }
+
+                sector_loops.push(new_loop);
+                println!("ONE LOOP");
+                println!("{:?}", sector_edges);
             }
+            println!("ONE SECTOR");
+            println!("{:?}", sector_edges);
+        }
+        println!("DONE!");
+        println!("{:?}", sector_loops_vec);
 
-            let mut hull_vertices: Vec<Vec2> = hull_indices
-                .iter()
-                .map(|&i| {
-                    Vec2::new(
-                        self.vertices[i as usize].0.x as f32,
-                        self.vertices[i as usize].0.y as f32,
-                    )
-                })
-                .collect();
-
-            // Sort hull points CCW
-            let (pivot_index, &pivot_point) = hull_vertices
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)))
-                .unwrap();
-            hull_vertices.swap(0, pivot_index);
-            hull_vertices[1..].sort_by(|a, b| {
-                let cross = (a - pivot_point).perp_dot(b - pivot_point);
-                if cross > 0.0 {
-                    std::cmp::Ordering::Less
-                } else if cross < 0.0 {
-                    std::cmp::Ordering::Greater
+        // Find outer loops, move to first loop
+        for sector_loops in &mut sector_loops_vec {
+            fn cmp_more_bottom_right(a: IVec2, b: IVec2) -> std::cmp::Ordering {
+                if a.y != b.y {
+                    a.y.cmp(&b.y)
                 } else {
-                    // Collinear, sort by distance from pivot
-                    let da = a.distance_squared(pivot_point);
-                    let db = b.distance_squared(pivot_point);
-                    da.total_cmp(&db)
+                    a.x.cmp(&b.x)
                 }
-            });
-
-            // Floor
-            let floor_start_index = vertices.len();
-            let floor_vertices: Vec<[f32; 3]> = hull_vertices
-                .iter()
-                .map(|v| [v.x, sector.floor_height as f32, v.y])
-                .collect();
-            let floor_vertex_colors = vec![[1.0, 1.0, 0.0, 1.0]; floor_vertices.len()];
-            let mut floor_indices: Vec<u32> = Vec::with_capacity((floor_vertices.len() - 2) * 3);
-            for i in 1..(floor_vertices.len() - 1) {
-                floor_indices.push(floor_start_index as u32);
-                floor_indices.push((floor_start_index + i) as u32 + 1);
-                floor_indices.push((floor_start_index + i) as u32);
             }
 
+            let bottom_right_most = IVec2::MIN;
+            let mut outer_loop_i = 0;
+            for (i, l) in sector_loops.iter().enumerate() {
+                let extreme_i = l
+                    .iter()
+                    .max_by(|&&a, &&b| {
+                        let vertex_a = self.vertices[a as usize];
+                        let vertex_b = self.vertices[b as usize];
+                        cmp_more_bottom_right(vertex_a.0, vertex_b.0)
+                    })
+                    .unwrap();
+                let extreme = self.vertices[*extreme_i as usize].0;
+                if cmp_more_bottom_right(extreme, bottom_right_most) == std::cmp::Ordering::Greater
+                {
+                    outer_loop_i = i;
+                }
+            }
+
+            // Swap loops
+            sector_loops.swap(0, outer_loop_i);
+        }
+
+        let sector_loops_vertices_vec: Vec<Vec<Vec<[f32; 2]>>> = sector_loops_vec
+            .iter()
+            .map(|v| {
+                v.iter()
+                    .map(|vv| {
+                        vv.iter()
+                            .map(|&i| {
+                                [
+                                    self.vertices[i as usize].0.x as f32,
+                                    self.vertices[i as usize].0.y as f32,
+                                ]
+                            })
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect();
+
+        use i_triangle::float::triangulatable::Triangulatable;
+        for sector_i in 0..num_sectors {
+            let triangulation = sector_loops_vertices_vec[sector_i]
+                .triangulate()
+                .to_triangulation::<u32>();
+
+            let floor_height = self.sectors[sector_i].floor_height as f32;
+            let floor_vertices: Vec<[f32; 3]> = triangulation
+                .points
+                .iter()
+                .map(|v| [v[0], floor_height, v[1]])
+                .collect();
+            let floor_start_index = vertices.len();
+            let floor_indices: Vec<u32> = triangulation
+                .indices
+                .iter()
+                .map(|i| i + floor_start_index as u32)
+                .rev()
+                .collect();
+
+            vertex_colors.extend(vec![[1.0, 1.0, 0.0, 1.0]; floor_vertices.len()]);
             vertices.extend(floor_vertices);
-            vertex_colors.extend(floor_vertex_colors);
             indices.extend(floor_indices);
 
-            // Ceiling
-            let ceiling_start_index = vertices.len();
-            let ceiling_vertices: Vec<[f32; 3]> = hull_vertices
-                .iter()
-                .map(|v| [v.x, sector.ceiling_height as f32, v.y])
+            let ceiling_height = self.sectors[sector_i].ceiling_height as f32;
+            let ceiling_vertices: Vec<[f32; 3]> = triangulation
+                .points
+                .into_iter()
+                .map(|v| [v[0], ceiling_height, v[1]])
                 .collect();
-            let ceiling_vertex_colors = vec![[1.0, 0.0, 1.0, 1.0]; ceiling_vertices.len()];
-            let mut ceiling_indices: Vec<u32> =
-                Vec::with_capacity((ceiling_vertices.len() - 2) * 3);
-            for i in 1..(ceiling_vertices.len() - 1) {
-                ceiling_indices.push(ceiling_start_index as u32);
-                ceiling_indices.push((ceiling_start_index + i) as u32);
-                ceiling_indices.push((ceiling_start_index + i) as u32 + 1);
-            }
+            let ceiling_start_index = vertices.len();
+            let ceiling_indices: Vec<u32> = triangulation
+                .indices
+                .iter()
+                .map(|i| i + ceiling_start_index as u32)
+                .collect();
 
+            vertex_colors.extend(vec![[1.0, 0.0, 1.0, 1.0]; ceiling_vertices.len()]);
             vertices.extend(ceiling_vertices);
-            vertex_colors.extend(ceiling_vertex_colors);
             indices.extend(ceiling_indices);
         }
 

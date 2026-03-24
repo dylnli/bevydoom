@@ -146,26 +146,26 @@ pub struct RawThing {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Linedef {
-    pub start_vertex: u32,
-    pub end_vertex: u32,
+    pub start_vertex_i: u32,
+    pub end_vertex_i: u32,
     pub flags: u32,
     pub special: u32,
     pub tag: u32,
-    pub front_sidedef: u32,
-    pub back_sidedef: Option<u32>,
+    pub front_sidedef_i: u32,
+    pub back_sidedef_i: Option<u32>,
 }
 
 impl Linedef {
     pub fn from_raw(r: RawLinedef) -> Self {
         Self {
-            start_vertex: r.start_vertex as u32,
-            end_vertex: r.end_vertex as u32,
+            start_vertex_i: r.start_vertex_i as u32,
+            end_vertex_i: r.end_vertex_i as u32,
             flags: r.flags as u32,
             special: r.special as u32,
             tag: r.tag as u32,
-            front_sidedef: r.front_sidedef as u32,
-            back_sidedef: if r.back_sidedef != 0xFFFF {
-                Some(r.back_sidedef as u32)
+            front_sidedef_i: r.front_sidedef_i as u32,
+            back_sidedef_i: if r.back_sidedef_i != 0xFFFF {
+                Some(r.back_sidedef_i as u32)
             } else {
                 None
             },
@@ -182,13 +182,13 @@ impl From<RawLinedef> for Linedef {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 pub struct RawLinedef {
-    pub start_vertex: u16,
-    pub end_vertex: u16,
+    pub start_vertex_i: u16,
+    pub end_vertex_i: u16,
     pub flags: u16,
     pub special: u16,
     pub tag: u16,
-    pub front_sidedef: u16,
-    pub back_sidedef: u16,
+    pub front_sidedef_i: u16,
+    pub back_sidedef_i: u16,
 }
 
 // SIDEDEF
@@ -199,7 +199,7 @@ pub struct Sidedef {
     pub upper_texture: WadName,
     pub lower_texture: WadName,
     pub middle_texture: WadName,
-    pub sector: u32,
+    pub sector_i: u32,
 }
 
 impl Sidedef {
@@ -209,7 +209,7 @@ impl Sidedef {
             upper_texture: WadName::from_slice(&r.upper_texture),
             lower_texture: WadName::from_slice(&r.upper_texture),
             middle_texture: WadName::from_slice(&r.upper_texture),
-            sector: r.sector as u32,
+            sector_i: r.sector_i as u32,
         }
     }
 }
@@ -228,7 +228,7 @@ pub struct RawSidedef {
     pub upper_texture: [u8; 8],
     pub lower_texture: [u8; 8],
     pub middle_texture: [u8; 8],
-    pub sector: u16,
+    pub sector_i: u16,
 }
 
 // VERTEX
