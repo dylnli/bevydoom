@@ -49,7 +49,7 @@ fn setup(
 
     let wad = WadFile::load(&args.0[1])?;
 
-    let map = Map::load(&wad, WadName::from("E1M1")).unwrap();
+    let map = Map::load(&wad, WadName::from("E1M2")).unwrap();
 
     commands.insert_resource(wad);
 
@@ -60,8 +60,18 @@ fn setup(
         ..default()
     });
 
+    let map_mesh = map.build_mesh();
+
     commands.spawn((
-        Mesh3d(meshes.add(map.build_mesh())),
+        Mesh3d(meshes.add(map_mesh.walls)),
+        MeshMaterial3d(unlit_material.clone()),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(map_mesh.floors)),
+        MeshMaterial3d(unlit_material.clone()),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(map_mesh.ceilings)),
         MeshMaterial3d(unlit_material),
     ));
 
