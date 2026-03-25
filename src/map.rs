@@ -108,32 +108,44 @@ impl Map {
                 // TODO: Handle dynamic geometry
                 // Top wall
                 if front_sector.ceiling_height != back_sector.ceiling_height {
-                    let higher_ceiling_height =
-                        front_sector.ceiling_height.max(back_sector.ceiling_height);
-                    let lower_ceiling_height =
-                        front_sector.ceiling_height.min(back_sector.ceiling_height);
-                    add_wall(
-                        start_vertex.0,
-                        end_vertex.0,
-                        higher_ceiling_height,
-                        lower_ceiling_height,
-                        [0.0, 1.0, 0.0, 1.0],
-                    );
+                    if front_sector.ceiling_height > back_sector.ceiling_height {
+                        add_wall(
+                            start_vertex.0,
+                            end_vertex.0,
+                            front_sector.ceiling_height,
+                            back_sector.ceiling_height,
+                            [0.0, 1.0, 0.0, 1.0],
+                        );
+                    } else {
+                        add_wall(
+                            end_vertex.0,
+                            start_vertex.0,
+                            back_sector.ceiling_height,
+                            front_sector.ceiling_height,
+                            [0.0, 1.0, 0.0, 1.0],
+                        );
+                    }
                 }
 
                 // Bottom wall
                 if front_sector.floor_height != back_sector.floor_height {
-                    let higher_floor_height =
-                        front_sector.floor_height.max(back_sector.floor_height);
-                    let lower_floor_height =
-                        front_sector.floor_height.min(back_sector.floor_height);
-                    add_wall(
-                        start_vertex.0,
-                        end_vertex.0,
-                        higher_floor_height,
-                        lower_floor_height,
-                        [0.0, 0.0, 1.0, 1.0],
-                    );
+                    if front_sector.floor_height < back_sector.floor_height {
+                        add_wall(
+                            start_vertex.0,
+                            end_vertex.0,
+                            back_sector.floor_height,
+                            front_sector.floor_height,
+                            [0.0, 0.0, 1.0, 1.0],
+                        );
+                    } else {
+                        add_wall(
+                            end_vertex.0,
+                            start_vertex.0,
+                            front_sector.floor_height,
+                            back_sector.floor_height,
+                            [0.0, 0.0, 1.0, 1.0],
+                        );
+                    }
                 }
             } else {
                 // One sided
