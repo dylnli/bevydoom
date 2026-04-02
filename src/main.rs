@@ -93,7 +93,7 @@ fn setup(
         palette_array[i] = DoomColor::new(r, g, b);
     }
     let doom_palette = DoomPalette::new(palette_array);
-    let palette_image = Image::new(
+    let mut palette_image = Image::new(
         Extent3d {
             width: 16,
             height: 16,
@@ -104,6 +104,7 @@ fn setup(
         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
+    palette_image.sampler = bevy::image::ImageSampler::nearest();
     let palette_handle = images.add(palette_image);
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(64.0, 64.0, 64.0))),
@@ -127,7 +128,7 @@ fn setup(
         image_data.push(color.b);
         image_data.push(255);
     }
-    let flat_image = Image::new(
+    let mut flat_image = Image::new(
         Extent3d {
             width: 64,
             height: 64,
@@ -138,6 +139,7 @@ fn setup(
         bevy::render::render_resource::TextureFormat::Rgba8Unorm,
         RenderAssetUsages::RENDER_WORLD,
     );
+    flat_image.sampler = bevy::image::ImageSampler::nearest();
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(64.0, 64.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
