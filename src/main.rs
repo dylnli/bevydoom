@@ -40,7 +40,7 @@ fn main() {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct DoomColor {
+pub struct DoomColor {
     pub r: u8,
     pub g: u8,
     pub b: u8,
@@ -55,7 +55,7 @@ impl DoomColor {
     }
 }
 
-struct DoomPalette {
+pub struct DoomPalette {
     array: [DoomColor; 256],
 }
 
@@ -151,8 +151,6 @@ fn setup(
         Transform::from_xyz(0.0, 100.0, 0.0),
     ));
 
-    commands.insert_resource(wad);
-
     let unlit_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         unlit: true,
@@ -161,20 +159,34 @@ fn setup(
         ..default()
     });
 
-    let map_mesh = map.build_mesh();
+    let map_mesh = map.build_mesh(&wad, &doom_palette);
 
     commands.spawn((
         Mesh3d(meshes.add(map_mesh.walls)),
         MeshMaterial3d(unlit_material.clone()),
     ));
-    commands.spawn((
-        Mesh3d(meshes.add(map_mesh.floors)),
-        MeshMaterial3d(unlit_material.clone()),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(map_mesh.ceilings)),
-        MeshMaterial3d(unlit_material),
-    ));
+    for (mesh, image) in map_mesh.floors {
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(images.add(image)),
+                unlit: true,
+                ..default()
+            })),
+        ));
+    }
+    for (mesh, image) in map_mesh.ceilings {
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(images.add(image)),
+                unlit: true,
+                ..default()
+            })),
+        ));
+    }
 
     let player_thing = map.things.iter().find(|t| t.thing_type == 1).unwrap();
 
@@ -201,6 +213,8 @@ fn setup(
             ..default()
         },
     ));
+
+    commands.insert_resource(wad);
 
     Ok(())
 }
