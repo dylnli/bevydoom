@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 
 // WAD TYPE
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum WadType {
     IWad,
     PWad,
@@ -29,13 +29,17 @@ impl WadName {
         Self(buffer)
     }
 
+    pub fn as_slice(&self) -> &[u8] {
+        let end = self.0.iter().position(|&b| b == 0).unwrap_or(8);
+        &self.0[..end]
+    }
+
     pub fn from_str(s: &str) -> Self {
         Self::from_slice(s.as_bytes())
     }
 
     pub fn as_str(&self) -> &str {
-        let end = self.0.iter().position(|&b| b == 0).unwrap_or(8);
-        std::str::from_utf8(&self.0[..end]).unwrap_or("badname")
+        std::str::from_utf8(self.as_slice()).unwrap_or("badname")
     }
 }
 
@@ -51,22 +55,10 @@ impl fmt::Debug for WadName {
     }
 }
 
-impl From<&[u8]> for WadName {
-    fn from(s: &[u8]) -> Self {
-        Self::from_slice(s)
-    }
-}
-
-impl From<&str> for WadName {
-    fn from(s: &str) -> Self {
-        Self::from_str(s)
-    }
-}
-
 // HEADER
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawHeader {
     pub magic: [u8; 4],
     pub num_lumps: i32,
@@ -75,6 +67,7 @@ pub struct RawHeader {
 
 // LUMP ENTRY
 
+#[derive(Clone, Copy, Debug)]
 pub struct LumpEntry {
     pub offset: usize,
     pub size: usize,
@@ -98,7 +91,7 @@ impl From<RawLumpEntry> for LumpEntry {
 }
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawLumpEntry {
     pub offset: i32,
     pub size: i32,
@@ -107,7 +100,7 @@ pub struct RawLumpEntry {
 
 // THING
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Thing {
     pub position: IVec2,
     pub angle: f32,
@@ -133,7 +126,7 @@ impl From<RawThing> for Thing {
 }
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawThing {
     pub x: i16,
     pub y: i16,
@@ -144,7 +137,7 @@ pub struct RawThing {
 
 // LINEDEF
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Linedef {
     pub start_vertex_i: u32,
     pub end_vertex_i: u32,
@@ -180,7 +173,7 @@ impl From<RawLinedef> for Linedef {
 }
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawLinedef {
     pub start_vertex_i: u16,
     pub end_vertex_i: u16,
@@ -193,7 +186,7 @@ pub struct RawLinedef {
 
 // SIDEDEF
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Sidedef {
     pub offset: IVec2,
     pub upper_texture: WadName,
@@ -221,7 +214,7 @@ impl From<RawSidedef> for Sidedef {
 }
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawSidedef {
     pub x_offset: i16,
     pub y_offset: i16,
@@ -233,7 +226,7 @@ pub struct RawSidedef {
 
 // VERTEX
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Vertex(pub IVec2);
 
 impl Vertex {
@@ -249,7 +242,7 @@ impl From<RawVertex> for Vertex {
 }
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawVertex {
     pub x: i16,
     pub y: i16,
@@ -257,7 +250,7 @@ pub struct RawVertex {
 
 // SECTOR
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Sector {
     pub floor_height: i32,
     pub ceiling_height: i32,
@@ -289,7 +282,7 @@ impl From<RawSector> for Sector {
 }
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
 pub struct RawSector {
     pub floor_height: i16,
     pub ceiling_height: i16,

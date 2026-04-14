@@ -1,19 +1,17 @@
 mod map;
 mod wad;
 
-use anyhow::anyhow;
-use bevy::{
-    asset::RenderAssetUsages,
-    camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
-    prelude::*,
-    render::render_resource::{Extent3d, TextureDimension},
-    window::WindowResolution,
-    winit::WinitSettings,
-};
-
 use crate::{
     map::Map,
     wad::{WadFile, types::WadName},
+};
+
+use anyhow::anyhow;
+use bevy::{
+    camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
+    prelude::*,
+    window::WindowResolution,
+    winit::WinitSettings,
 };
 
 #[derive(Resource)]
@@ -55,15 +53,7 @@ impl DoomColor {
     }
 }
 
-pub struct DoomPalette {
-    array: [DoomColor; 256],
-}
-
-impl DoomPalette {
-    pub fn new(array: [DoomColor; 256]) -> Self {
-        Self { array }
-    }
-}
+pub struct DoomPalette([DoomColor; 256]);
 
 fn setup(
     mut commands: Commands,
@@ -78,83 +68,22 @@ fn setup(
 
     let wad = WadFile::load(&args.0[1])?;
 
-    let playpal = wad.load_lump(wad.find_lump(WadName::from("PLAYPAL")).unwrap());
+    let playpal = wad.load_lump(wad.find_lump(WadName::from_slice(b"PLAYPAL")).unwrap());
     let first_palette = &playpal[0..768];
     let mut palette_array = [DoomColor::BLACK; 256];
-    let mut palette_formatted = Vec::with_capacity(1024);
     for i in 0..first_palette.len() / 3 {
         let r = first_palette[i * 3];
         let g = first_palette[i * 3 + 1];
         let b = first_palette[i * 3 + 2];
-        palette_formatted.push(r);
-        palette_formatted.push(g);
-        palette_formatted.push(b);
-        palette_formatted.push(255);
         palette_array[i] = DoomColor::new(r, g, b);
     }
-    let doom_palette = DoomPalette::new(palette_array);
-    let mut palette_image = Image::new(
-        Extent3d {
-            width: 16,
-            height: 16,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        palette_formatted,
-        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    palette_image.sampler = bevy::image::ImageSampler::nearest();
-    let palette_handle = images.add(palette_image);
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(64.0, 64.0, 64.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            unlit: true,
-            base_color_texture: Some(palette_handle),
-            ..default()
-        })),
-    ));
+    let doom_palette = DoomPalette(palette_array);
 
-    let map = Map::load(&wad, WadName::from("E1M2")).unwrap();
-
-    let sector = map.sectors[0];
-    let floor_flat = wad.load_lump(wad.find_lump(sector.floor_texture).unwrap());
-    let mut image_data = Vec::with_capacity(64 * 64 * 4);
-    for pixel in floor_flat {
-        let color = doom_palette.array[*pixel as usize];
-        image_data.push(color.r);
-        image_data.push(color.g);
-        image_data.push(color.b);
-        image_data.push(255);
-    }
-    let mut flat_image = Image::new(
-        Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        image_data,
-        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    flat_image.sampler = bevy::image::ImageSampler::nearest();
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(64.0, 64.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(images.add(flat_image)),
-            unlit: true,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, 100.0, 0.0),
-    ));
+    let map = Map::load(&wad, WadName::from_slice(b"E1M2")).unwrap();
 
     let unlit_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         unlit: true,
-        // base_color_texture: Some(palette_handle),
         // cull_mode: None,
         ..default()
     });
@@ -165,23 +94,23 @@ fn setup(
         Mesh3d(meshes.add(map_mesh.walls)),
         MeshMaterial3d(unlit_material.clone()),
     ));
-    for (mesh, image) in map_mesh.floors {
+    for textured_mesh in map_mesh.floors {
         commands.spawn((
-            Mesh3d(meshes.add(mesh)),
+            Mesh3d(meshes.add(textured_mesh.mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::WHITE,
-                base_color_texture: Some(images.add(image)),
+                base_color_texture: Some(images.add(textured_mesh.texture)),
                 unlit: true,
                 ..default()
             })),
         ));
     }
-    for (mesh, image) in map_mesh.ceilings {
+    for textured_mesh in map_mesh.ceilings {
         commands.spawn((
-            Mesh3d(meshes.add(mesh)),
+            Mesh3d(meshes.add(textured_mesh.mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::WHITE,
-                base_color_texture: Some(images.add(image)),
+                base_color_texture: Some(images.add(textured_mesh.texture)),
                 unlit: true,
                 ..default()
             })),
@@ -207,8 +136,8 @@ fn setup(
         ),
         FreeCamera {
             sensitivity: 0.2,
-            friction: 25.0,
-            walk_speed: 100.0,
+            friction: 10.0,
+            walk_speed: 200.0,
             run_speed: 300.0,
             ..default()
         },

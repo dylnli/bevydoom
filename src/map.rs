@@ -1,19 +1,17 @@
-use bevy::{
-    asset::RenderAssetUsages,
-    color::Color,
-    image::Image,
-    math::IVec2,
-    mesh::{Indices, Mesh, PrimitiveTopology},
-    pbr::StandardMaterial,
-    render::render_resource::{Extent3d, TextureDimension},
-};
-
 use crate::{
     DoomPalette,
     wad::{WadFile, types::*},
 };
 
-#[derive(Debug, Clone)]
+use bevy::{
+    asset::RenderAssetUsages,
+    image::Image,
+    math::IVec2,
+    mesh::{Indices, Mesh, PrimitiveTopology},
+    render::render_resource::{Extent3d, TextureDimension},
+};
+
+#[derive(Clone, Debug)]
 pub struct Map {
     pub name: WadName,
     pub things: Vec<Thing>,
@@ -24,7 +22,7 @@ pub struct Map {
 }
 
 impl Map {
-    pub fn load(wad: &WadFile, name: WadName) -> Option<Self> {
+    pub fn load(wad: &WadFile, name: WadName) -> anyhow::Result<Self> {
         let map_index = wad.find_lump(name)?;
 
         let things = WadFile::bytes_to_vec::<Thing, RawThing>(wad.load_lump(map_index + 1));
@@ -33,7 +31,7 @@ impl Map {
         let vertices = WadFile::bytes_to_vec::<Vertex, RawVertex>(wad.load_lump(map_index + 4));
         let sectors = WadFile::bytes_to_vec::<Sector, RawSector>(wad.load_lump(map_index + 8));
 
-        Some(Map {
+        Ok(Map {
             name,
             things,
             linedefs,
@@ -184,7 +182,7 @@ impl Map {
         &self,
         wad: &WadFile,
         palette: &DoomPalette,
-    ) -> (Vec<(Mesh, Image)>, Vec<(Mesh, Image)>) {
+    ) -> (Vec<TexturedMesh>, Vec<TexturedMesh>) {
         let num_sectors = self.sectors.len();
 
         #[derive(Clone, Copy)]
@@ -315,120 +313,200 @@ impl Map {
             })
             .collect();
 
-        let mut floors_out = Vec::with_capacity(num_sectors);
-        let mut ceilings_out = Vec::with_capacity(num_sectors);
-
+        // Triangulate sector meshes
         use i_triangle::float::triangulation::Triangulation;
         use i_triangle::float::triangulator::Triangulator;
         let mut triangulator = Triangulator::<u32>::default();
         let mut triangulation = Triangulation::with_capacity(10);
 
+        let mut triangulated_sectors = Vec::with_capacity(num_sectors);
+        for sector_i in 0..num_sectors {
+            triangulator.triangulate_into(&sector_loops_vertices[sector_i], &mut triangulation);
+
+            let points = triangulation.points.clone();
+            let uvs: Vec<[f32; 2]> = triangulation
+                .points
+                .iter()
+                .map(|p| [p[0] / 64.0, p[1] / 64.0])
+                .collect();
+            let indices = triangulation.indices.clone();
+
+            triangulated_sectors.push((points, uvs, indices));
+        }
+
+        // Batch floor and ceiling meshes by texture
+        let mut floors_out = Vec::with_capacity(num_sectors);
+        let mut ceilings_out = Vec::with_capacity(num_sectors);
+
         let mut image_sampler_descriptor = bevy::image::ImageSamplerDescriptor::nearest();
         image_sampler_descriptor.set_address_mode(bevy::image::ImageAddressMode::Repeat);
         let image_sampler = bevy::image::ImageSampler::Descriptor(image_sampler_descriptor);
 
+        let mut floors_visited = vec![false; num_sectors];
+        let mut ceilings_visited = vec![false; num_sectors];
+
         for sector_i in 0..num_sectors {
             let sector = self.sectors[sector_i];
-            triangulator.triangulate_into(&sector_loops_vertices[sector_i], &mut triangulation);
 
             // Floor mesh
-            let floor_height = sector.floor_height as f32;
-            let floor_vertices: Vec<[f32; 3]> = triangulation
-                .points
-                .iter()
-                .map(|v| [v[0], floor_height, v[1]])
-                .collect();
-            let floor_uvs: Vec<[f32; 2]> = triangulation
-                .points
-                .iter()
-                .map(|v| [v[0] / 64.0, v[1] / 64.0])
-                .collect();
-            let mut floor_indices: Vec<u32> = triangulation.indices.clone();
-            floor_indices.reverse();
+            if !floors_visited[sector_i] {
+                floors_visited[sector_i] = true;
 
-            let floor_mesh = Mesh::new(
-                PrimitiveTopology::TriangleList,
-                RenderAssetUsages::RENDER_WORLD,
-            )
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, floor_vertices)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, floor_uvs)
-            .with_inserted_indices(Indices::U32(floor_indices));
+                let mut vertices: Vec<[f32; 3]> = Vec::new();
+                let mut uvs: Vec<[f32; 2]> = Vec::new();
+                let mut indices: Vec<u32> = Vec::new();
 
-            // Floor texture
-            let floor_flat = wad.load_lump(wad.find_lump(sector.floor_texture).unwrap());
-            let mut floor_image_data = Vec::with_capacity(64 * 64 * 4);
-            for pixel in floor_flat {
-                let color = palette.array[*pixel as usize];
-                floor_image_data.extend([color.r, color.g, color.b, 255]);
+                let floor_texture_name = sector.floor_texture;
+
+                // Visit all sectors with the same floor texture
+                for new_i in sector_i..num_sectors {
+                    let new_sector = self.sectors[new_i];
+                    if new_sector.floor_texture != floor_texture_name {
+                        continue;
+                    }
+                    floors_visited[new_i] = true;
+
+                    let floor_height = new_sector.floor_height as f32;
+                    let new_vertices: Vec<[f32; 3]> = triangulated_sectors[new_i]
+                        .0
+                        .iter()
+                        .map(|v| [v[0], floor_height, v[1]])
+                        .collect();
+                    let new_uvs: Vec<[f32; 2]> = triangulated_sectors[new_i].1.clone();
+                    let index_offset = vertices.len() as u32;
+                    let new_indices: Vec<u32> = triangulated_sectors[new_i]
+                        .2
+                        .iter()
+                        .map(|i| i + index_offset)
+                        .rev()
+                        .collect();
+
+                    vertices.extend(new_vertices);
+                    uvs.extend(new_uvs);
+                    indices.extend(new_indices);
+                }
+
+                let floor_mesh = Mesh::new(
+                    PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::RENDER_WORLD,
+                )
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+                .with_inserted_indices(Indices::U32(indices));
+
+                // Floor texture
+                let floor_flat = wad.load_lump(wad.find_flat(floor_texture_name).unwrap());
+                let mut floor_image_data = Vec::with_capacity(64 * 64 * 4);
+                for pixel in floor_flat {
+                    let color = palette.0[*pixel as usize];
+                    floor_image_data.extend([color.r, color.g, color.b, 255]);
+                }
+                let mut floor_image = Image::new(
+                    Extent3d {
+                        width: 64,
+                        height: 64,
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    floor_image_data,
+                    bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                    RenderAssetUsages::RENDER_WORLD,
+                );
+                floor_image.sampler = image_sampler.clone();
+
+                // Add floor
+                floors_out.push(TexturedMesh::new(floor_mesh, floor_image));
             }
-            let mut floor_image = Image::new(
-                Extent3d {
-                    width: 64,
-                    height: 64,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                floor_image_data,
-                bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-                RenderAssetUsages::RENDER_WORLD,
-            );
-            floor_image.sampler = image_sampler.clone();
-
-            // Add floor
-            floors_out.push((floor_mesh, floor_image));
 
             // Ceiling mesh
-            let ceiling_height = sector.ceiling_height as f32;
-            let ceiling_vertices: Vec<[f32; 3]> = triangulation
-                .points
-                .iter()
-                .map(|v| [v[0], ceiling_height, v[1]])
-                .collect();
-            let ceiling_uvs: Vec<[f32; 2]> = triangulation
-                .points
-                .iter()
-                .map(|v| [v[0] / 64.0, v[1] / 64.0])
-                .collect();
-            let ceiling_indices: Vec<u32> = triangulation.indices.clone();
+            if !ceilings_visited[sector_i] {
+                ceilings_visited[sector_i] = true;
 
-            let ceiling_mesh = Mesh::new(
-                PrimitiveTopology::TriangleList,
-                RenderAssetUsages::RENDER_WORLD,
-            )
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, ceiling_vertices)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, ceiling_uvs)
-            .with_inserted_indices(Indices::U32(ceiling_indices));
+                let mut vertices: Vec<[f32; 3]> = Vec::new();
+                let mut uvs: Vec<[f32; 2]> = Vec::new();
+                let mut indices: Vec<u32> = Vec::new();
 
-            // Ceiling texture
-            let ceiling_flat = wad.load_lump(wad.find_lump(sector.ceiling_texture).unwrap());
-            let mut ceiling_image_data = Vec::with_capacity(64 * 64 * 4);
-            for pixel in ceiling_flat {
-                let color = palette.array[*pixel as usize];
-                ceiling_image_data.extend([color.r, color.g, color.b, 255]);
+                let ceiling_texture_name = sector.ceiling_texture;
+
+                // Visit all sectors with the same ceiling texture
+                for new_i in sector_i..num_sectors {
+                    let new_sector = self.sectors[new_i];
+                    if new_sector.ceiling_texture != ceiling_texture_name {
+                        continue;
+                    }
+                    ceilings_visited[new_i] = true;
+
+                    let ceiling_height = new_sector.ceiling_height as f32;
+                    let new_vertices: Vec<[f32; 3]> = triangulated_sectors[new_i]
+                        .0
+                        .iter()
+                        .map(|v| [v[0], ceiling_height, v[1]])
+                        .collect();
+                    let new_uvs: Vec<[f32; 2]> = triangulated_sectors[new_i].1.clone();
+                    let index_offset = vertices.len() as u32;
+                    let new_indices: Vec<u32> = triangulated_sectors[new_i]
+                        .2
+                        .iter()
+                        .map(|i| i + index_offset)
+                        .collect();
+
+                    vertices.extend(new_vertices);
+                    uvs.extend(new_uvs);
+                    indices.extend(new_indices);
+                }
+
+                let ceiling_mesh = Mesh::new(
+                    PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::RENDER_WORLD,
+                )
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+                .with_inserted_indices(Indices::U32(indices));
+
+                // Ceiling texture
+                let ceiling_flat = wad.load_lump(wad.find_flat(ceiling_texture_name).unwrap());
+                let mut ceiling_image_data = Vec::with_capacity(64 * 64 * 4);
+                for pixel in ceiling_flat {
+                    let color = palette.0[*pixel as usize];
+                    ceiling_image_data.extend([color.r, color.g, color.b, 255]);
+                }
+                let mut ceiling_image = Image::new(
+                    Extent3d {
+                        width: 64,
+                        height: 64,
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    ceiling_image_data,
+                    bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                    RenderAssetUsages::RENDER_WORLD,
+                );
+                ceiling_image.sampler = image_sampler.clone();
+
+                // Add ceiling
+                ceilings_out.push(TexturedMesh::new(ceiling_mesh, ceiling_image));
             }
-            let mut ceiling_image = Image::new(
-                Extent3d {
-                    width: 64,
-                    height: 64,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                ceiling_image_data,
-                bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-                RenderAssetUsages::RENDER_WORLD,
-            );
-            ceiling_image.sampler = image_sampler.clone();
-
-            // Add ceiling
-            ceilings_out.push((ceiling_mesh, ceiling_image));
         }
 
         (floors_out, ceilings_out)
     }
 }
 
+#[derive(Clone)]
 pub struct MapMesh {
     pub walls: Mesh,
-    pub floors: Vec<(Mesh, Image)>,
-    pub ceilings: Vec<(Mesh, Image)>,
+    pub floors: Vec<TexturedMesh>,
+    pub ceilings: Vec<TexturedMesh>,
+}
+
+#[derive(Clone)]
+pub struct TexturedMesh {
+    pub mesh: Mesh,
+    pub texture: Image,
+}
+
+impl TexturedMesh {
+    pub fn new(mesh: Mesh, texture: Image) -> Self {
+        Self { mesh, texture }
+    }
 }
