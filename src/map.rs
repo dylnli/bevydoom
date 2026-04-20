@@ -5,13 +5,14 @@ use crate::{
 
 use bevy::{
     asset::RenderAssetUsages,
+    ecs::resource::Resource,
     image::Image,
     math::IVec2,
     mesh::{Indices, Mesh, PrimitiveTopology},
     render::render_resource::{Extent3d, TextureDimension},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Resource, Clone, Debug)]
 pub struct Map {
     pub name: WadName,
     pub things: Vec<Thing>,
