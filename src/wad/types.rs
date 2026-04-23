@@ -16,8 +16,7 @@ pub enum WadType {
 
 // WAD NAME
 
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Zeroable, Pod)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WadName([u8; 8]);
 
 impl WadName {

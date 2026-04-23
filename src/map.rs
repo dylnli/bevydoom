@@ -142,44 +142,105 @@ impl Map {
                 // TODO: Handle dynamic geometry
                 // Top wall
                 if front_sector.ceiling_height != back_sector.ceiling_height {
-                    if front_sector.ceiling_height > back_sector.ceiling_height {
-                        add_wall(
-                            start_vertex.0,
-                            end_vertex.0,
-                            front_sector.ceiling_height,
-                            back_sector.ceiling_height,
-                            [0.0, 1.0, 0.0, 1.0],
-                        );
+                    let (a, b, c, d, e) =
+                        if front_sector.ceiling_height > back_sector.ceiling_height {
+                            (
+                                start_vertex.0,
+                                end_vertex.0,
+                                front_sector.ceiling_height,
+                                back_sector.ceiling_height,
+                                front_sidedef.upper_texture,
+                            )
+                        } else {
+                            (
+                                end_vertex.0,
+                                start_vertex.0,
+                                back_sector.ceiling_height,
+                                front_sector.ceiling_height,
+                                back_sidedef.upper_texture,
+                            )
+                        };
+                    let (vertices, vertex_colors, indices) =
+                        add_wall(a, b, c, d, [1.0, 1.0, 1.0, 1.0]);
+                    let image = if let Some(texture) = textures.iter().find(|t| t.name == e) {
+                        texture.to_image(palette)
                     } else {
-                        add_wall(
-                            end_vertex.0,
-                            start_vertex.0,
-                            back_sector.ceiling_height,
-                            front_sector.ceiling_height,
-                            [0.0, 1.0, 0.0, 1.0],
-                        );
-                    }
+                        Image::new(
+                            bevy::render::render_resource::Extent3d {
+                                width: 1,
+                                height: 1,
+                                depth_or_array_layers: 1,
+                            },
+                            bevy::render::render_resource::TextureDimension::D2,
+                            vec![255, 0, 255, 0],
+                            bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+                        )
+                    };
+                    meshes.push(TexturedMesh::new(
+                        Mesh::new(
+                            PrimitiveTopology::TriangleList,
+                            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                        )
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::from(vertices))
+                        .with_inserted_attribute(
+                            Mesh::ATTRIBUTE_UV_0,
+                            vec![[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+                        )
+                        .with_inserted_indices(Indices::U32(Vec::from(indices))),
+                        image,
+                    ));
                 }
 
                 // Bottom wall
                 if front_sector.floor_height != back_sector.floor_height {
-                    if front_sector.floor_height < back_sector.floor_height {
-                        add_wall(
+                    let (a, b, c, d, e) = if front_sector.floor_height < back_sector.floor_height {
+                        (
                             start_vertex.0,
                             end_vertex.0,
                             back_sector.floor_height,
                             front_sector.floor_height,
-                            [0.0, 0.0, 1.0, 1.0],
-                        );
+                            front_sidedef.lower_texture,
+                        )
                     } else {
-                        add_wall(
+                        (
                             end_vertex.0,
                             start_vertex.0,
                             front_sector.floor_height,
                             back_sector.floor_height,
-                            [0.0, 0.0, 1.0, 1.0],
-                        );
-                    }
+                            back_sidedef.lower_texture,
+                        )
+                    };
+                    let (vertices, vertex_colors, indices) =
+                        add_wall(a, b, c, d, [1.0, 1.0, 1.0, 1.0]);
+                    let image = if let Some(texture) = textures.iter().find(|t| t.name == e) {
+                        texture.to_image(palette)
+                    } else {
+                        Image::new(
+                            bevy::render::render_resource::Extent3d {
+                                width: 1,
+                                height: 1,
+                                depth_or_array_layers: 1,
+                            },
+                            bevy::render::render_resource::TextureDimension::D2,
+                            vec![255, 0, 255, 0],
+                            bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+                        )
+                    };
+                    meshes.push(TexturedMesh::new(
+                        Mesh::new(
+                            PrimitiveTopology::TriangleList,
+                            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                        )
+                        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::from(vertices))
+                        .with_inserted_attribute(
+                            Mesh::ATTRIBUTE_UV_0,
+                            vec![[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+                        )
+                        .with_inserted_indices(Indices::U32(Vec::from(indices))),
+                        image,
+                    ));
                 }
             } else {
                 // One sided
@@ -224,7 +285,7 @@ impl Map {
                     )
                     .with_inserted_indices(Indices::U32(Vec::from(indices))),
                     image,
-                ))
+                ));
             }
         }
 

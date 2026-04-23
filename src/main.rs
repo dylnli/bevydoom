@@ -122,7 +122,7 @@ fn setup_map(
     }
     let doom_palette = DoomPalette(palette_array);
 
-    let map = Map::load(&wad, WadName::from_slice(b"E1M1"))?;
+    let map = Map::load(&wad, WadName::from_slice(b"E1M2"))?;
 
     let unlit_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
