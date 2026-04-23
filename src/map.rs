@@ -9,7 +9,6 @@ use bevy::{
     image::Image,
     math::IVec2,
     mesh::{Indices, Mesh, PrimitiveTopology},
-    render::render_resource::{Extent3d, TextureDimension},
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -22,15 +21,34 @@ pub struct Map {
     pub sectors: Vec<Sector>,
 }
 
+#[derive(Clone)]
+pub struct MapMesh {
+    pub walls: Vec<TexturedMesh>,
+    pub floors: Vec<TexturedMesh>,
+    pub ceilings: Vec<TexturedMesh>,
+}
+
+#[derive(Clone)]
+pub struct TexturedMesh {
+    pub mesh: Mesh,
+    pub texture: Image,
+}
+
+impl TexturedMesh {
+    pub fn new(mesh: Mesh, texture: Image) -> Self {
+        Self { mesh, texture }
+    }
+}
+
 impl Map {
     pub fn load(wad: &WadFile, name: WadName) -> anyhow::Result<Self> {
         let map_index = wad.find_lump(name)?;
 
-        let things = WadFile::bytes_to_vec::<Thing, RawThing>(wad.load_lump(map_index + 1));
-        let linedefs = WadFile::bytes_to_vec::<Linedef, RawLinedef>(wad.load_lump(map_index + 2));
-        let sidedefs = WadFile::bytes_to_vec::<Sidedef, RawSidedef>(wad.load_lump(map_index + 3));
-        let vertices = WadFile::bytes_to_vec::<Vertex, RawVertex>(wad.load_lump(map_index + 4));
-        let sectors = WadFile::bytes_to_vec::<Sector, RawSector>(wad.load_lump(map_index + 8));
+        let things = bytes_to_vec::<Thing, RawThing>(wad.load_lump(map_index + 1))?;
+        let linedefs = bytes_to_vec::<Linedef, RawLinedef>(wad.load_lump(map_index + 2))?;
+        let sidedefs = bytes_to_vec::<Sidedef, RawSidedef>(wad.load_lump(map_index + 3))?;
+        let vertices = bytes_to_vec::<Vertex, RawVertex>(wad.load_lump(map_index + 4))?;
+        let sectors = bytes_to_vec::<Sector, RawSector>(wad.load_lump(map_index + 8))?;
 
         Ok(Map {
             name,
@@ -42,33 +60,41 @@ impl Map {
         })
     }
 
-    pub fn build_mesh(&self, wad: &WadFile, palette: &DoomPalette) -> MapMesh {
-        let walls = self.build_walls_mesh();
-        let (floors, ceilings) = self.build_floors_ceilings_mesh(wad, palette);
-        MapMesh {
+    pub fn build_mesh(
+        &self,
+        wad: &WadFile,
+        textures: &[Texture],
+        palette: &DoomPalette,
+    ) -> anyhow::Result<MapMesh> {
+        let walls = self.build_walls_mesh(textures, palette);
+        let (floors, ceilings) = self.build_floors_ceilings_meshes(wad, palette)?;
+        Ok(MapMesh {
             walls,
             floors,
             ceilings,
-        }
+        })
     }
 
-    fn build_walls_mesh(&self) -> Mesh {
-        let mut vertices = Vec::with_capacity(self.linedefs.len() * 4);
+    fn build_walls_mesh(&self, textures: &[Texture], palette: &DoomPalette) -> Vec<TexturedMesh> {
+        // let mut vertices = Vec::with_capacity(self.linedefs.len() * 4);
         let mut vertex_colors: Vec<[f32; 4]> = Vec::with_capacity(self.linedefs.len() * 4);
-        let mut indices = Vec::with_capacity(self.linedefs.len() * 6);
+        // let mut indices = Vec::with_capacity(self.linedefs.len() * 6);
 
         let mut add_quad = |quad_vertices: [[f32; 3]; 4], color: [f32; 4]| {
-            let start_index = vertices.len() as u32;
-            vertices.extend(quad_vertices);
-            vertex_colors.extend([color; 4]);
-            indices.extend([
-                start_index + 0,
-                start_index + 1,
-                start_index + 3,
-                start_index + 1,
-                start_index + 2,
-                start_index + 3,
-            ]);
+            let start_index = 0;
+            // let start_index = vertices.len() as u32;
+            (
+                quad_vertices,
+                [color; 4],
+                [
+                    start_index + 0,
+                    start_index + 1,
+                    start_index + 3,
+                    start_index + 1,
+                    start_index + 2,
+                    start_index + 3,
+                ],
+            )
         };
 
         let mut add_wall = |right_vertex: IVec2,
@@ -98,8 +124,10 @@ impl Map {
                     left_vertex.y as f32,
                 ],
             ];
-            add_quad(new_vertices, color);
+            add_quad(new_vertices, color)
         };
+
+        let mut meshes = Vec::with_capacity(self.linedefs.len());
 
         for linedef in &self.linedefs {
             if let Some(back_sidedef_i) = linedef.back_sidedef_i {
@@ -160,30 +188,62 @@ impl Map {
                 let sidedef = self.sidedefs[linedef.front_sidedef_i as usize];
                 let sector = self.sectors[sidedef.sector_i as usize];
 
-                add_wall(
+                let (vertices, vertex_colors, indices) = add_wall(
                     start_vertex.0,
                     end_vertex.0,
                     sector.ceiling_height,
                     sector.floor_height,
-                    [1.0, 0.0, 0.0, 1.0],
+                    [1.0, 1.0, 1.0, 1.0],
                 );
+                let image = if let Some(texture) =
+                    textures.iter().find(|t| t.name == sidedef.middle_texture)
+                {
+                    texture.to_image(palette)
+                } else {
+                    Image::new(
+                        bevy::render::render_resource::Extent3d {
+                            width: 1,
+                            height: 1,
+                            depth_or_array_layers: 1,
+                        },
+                        bevy::render::render_resource::TextureDimension::D2,
+                        vec![255, 0, 255, 0],
+                        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+                    )
+                };
+                meshes.push(TexturedMesh::new(
+                    Mesh::new(
+                        PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::from(vertices))
+                    .with_inserted_attribute(
+                        Mesh::ATTRIBUTE_UV_0,
+                        vec![[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+                    )
+                    .with_inserted_indices(Indices::U32(Vec::from(indices))),
+                    image,
+                ))
             }
         }
 
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vertex_colors)
-        .with_inserted_indices(Indices::U32(indices))
+        meshes
+
+        // Mesh::new(
+        //     PrimitiveTopology::TriangleList,
+        //     RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        // )
+        // .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+        // .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vertex_colors)
+        // .with_inserted_indices(Indices::U32(indices))
     }
 
-    fn build_floors_ceilings_mesh(
+    fn build_floors_ceilings_meshes(
         &self,
         wad: &WadFile,
         palette: &DoomPalette,
-    ) -> (Vec<TexturedMesh>, Vec<TexturedMesh>) {
+    ) -> anyhow::Result<(Vec<TexturedMesh>, Vec<TexturedMesh>)> {
         let num_sectors = self.sectors.len();
 
         #[derive(Clone, Copy)]
@@ -396,23 +456,8 @@ impl Map {
                 .with_inserted_indices(Indices::U32(indices));
 
                 // Floor texture
-                let floor_flat = wad.load_lump(wad.find_flat(floor_texture_name).unwrap());
-                let mut floor_image_data = Vec::with_capacity(64 * 64 * 4);
-                for pixel in floor_flat {
-                    let color = palette.0[*pixel as usize];
-                    floor_image_data.extend([color.r, color.g, color.b, 255]);
-                }
-                let mut floor_image = Image::new(
-                    Extent3d {
-                        width: 64,
-                        height: 64,
-                        depth_or_array_layers: 1,
-                    },
-                    TextureDimension::D2,
-                    floor_image_data,
-                    bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-                    RenderAssetUsages::RENDER_WORLD,
-                );
+                let floor_flat = wad.load_flat(wad.find_flat(floor_texture_name)?)?;
+                let mut floor_image = floor_flat.to_image(palette);
                 floor_image.sampler = image_sampler.clone();
 
                 // Add floor
@@ -465,23 +510,8 @@ impl Map {
                 .with_inserted_indices(Indices::U32(indices));
 
                 // Ceiling texture
-                let ceiling_flat = wad.load_lump(wad.find_flat(ceiling_texture_name).unwrap());
-                let mut ceiling_image_data = Vec::with_capacity(64 * 64 * 4);
-                for pixel in ceiling_flat {
-                    let color = palette.0[*pixel as usize];
-                    ceiling_image_data.extend([color.r, color.g, color.b, 255]);
-                }
-                let mut ceiling_image = Image::new(
-                    Extent3d {
-                        width: 64,
-                        height: 64,
-                        depth_or_array_layers: 1,
-                    },
-                    TextureDimension::D2,
-                    ceiling_image_data,
-                    bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-                    RenderAssetUsages::RENDER_WORLD,
-                );
+                let ceiling_flat = wad.load_flat(wad.find_flat(ceiling_texture_name)?)?;
+                let mut ceiling_image = ceiling_flat.to_image(palette);
                 ceiling_image.sampler = image_sampler.clone();
 
                 // Add ceiling
@@ -489,25 +519,6 @@ impl Map {
             }
         }
 
-        (floors_out, ceilings_out)
-    }
-}
-
-#[derive(Clone)]
-pub struct MapMesh {
-    pub walls: Mesh,
-    pub floors: Vec<TexturedMesh>,
-    pub ceilings: Vec<TexturedMesh>,
-}
-
-#[derive(Clone)]
-pub struct TexturedMesh {
-    pub mesh: Mesh,
-    pub texture: Image,
-}
-
-impl TexturedMesh {
-    pub fn new(mesh: Mesh, texture: Image) -> Self {
-        Self { mesh, texture }
+        Ok((floors_out, ceilings_out))
     }
 }

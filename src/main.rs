@@ -27,20 +27,20 @@ const WINDOW_HEIGHT: u32 = 600;
 const GAME_WIDTH: u32 = 800;
 const GAME_HEIGHT: u32 = 500;
 
-const PIXEL_PERFECT_LAYERS: RenderLayers = RenderLayers::layer(0);
-const HIGH_RES_LAYERS: RenderLayers = RenderLayers::layer(1);
+const GAME_RENDER_LAYERS: RenderLayers = RenderLayers::layer(0);
+const NATIVE_RENDER_LAYERS: RenderLayers = RenderLayers::layer(1);
 
-// Low-resolution texture that contains the pixel perfect world that is rendered to high res camera
+// Game screen for scaling
 #[derive(Component)]
 struct Canvas;
 
-// Camera that renders the pixel perfect world to canvas
+// Renders game to canvas
 #[derive(Component)]
 struct GameCamera;
 
-// Camera that renders the canvas and other HIGH_RES_LAYERS things to screen
+// Renders canvas + other to screen
 #[derive(Component)]
-struct OuterCamera;
+struct NativeCamera;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -58,7 +58,13 @@ fn main() {
         }))
         .add_plugins(FreeCameraPlugin)
         .insert_resource(CommandLineArgs(args))
-        .add_systems(Startup, (setup_wad, setup_map, setup_camera).chain())
+        .add_systems(
+            Startup,
+            (
+                setup_native_camera,
+                (setup_wad, setup_map, setup_game_camera).chain(),
+            ),
+        )
         .run();
 }
 
@@ -67,14 +73,20 @@ pub struct DoomColor {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+    pub a: u8,
 }
 
 impl DoomColor {
-    pub const BLACK: Self = Self::new(0, 0, 0);
-    pub const WHITE: Self = Self::new(1, 1, 1);
+    pub const BLACK: Self = Self::new(0, 0, 0, 255);
+    pub const WHITE: Self = Self::new(255, 255, 255, 255);
+    pub const NONE: Self = Self::new(0, 0, 0, 0);
 
-    pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
+    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a }
+    }
+
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b, a: 255 }
     }
 }
 
@@ -106,11 +118,11 @@ fn setup_map(
         let r = first_palette[i * 3];
         let g = first_palette[i * 3 + 1];
         let b = first_palette[i * 3 + 2];
-        palette_array[i] = DoomColor::new(r, g, b);
+        palette_array[i] = DoomColor::rgb(r, g, b);
     }
     let doom_palette = DoomPalette(palette_array);
 
-    let map = Map::load(&wad, WadName::from_slice(b"E1M2"))?;
+    let map = Map::load(&wad, WadName::from_slice(b"E1M1"))?;
 
     let unlit_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
@@ -119,12 +131,24 @@ fn setup_map(
         ..default()
     });
 
-    let map_mesh = map.build_mesh(&wad, &doom_palette);
+    let textures = wad.load_textures()?;
+    let map_mesh = map.build_mesh(&wad, &textures, &doom_palette)?;
 
-    commands.spawn((
-        Mesh3d(meshes.add(map_mesh.walls)),
-        MeshMaterial3d(unlit_material.clone()),
-    ));
+    // commands.spawn((
+    //     Mesh3d(meshes.add(map_mesh.walls)),
+    //     MeshMaterial3d(unlit_material.clone()),
+    // ));
+    for textured_mesh in map_mesh.walls {
+        commands.spawn((
+            Mesh3d(meshes.add(textured_mesh.mesh)),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(images.add(textured_mesh.texture)),
+                unlit: true,
+                ..default()
+            })),
+        ));
+    }
     for textured_mesh in map_mesh.floors {
         commands.spawn((
             Mesh3d(meshes.add(textured_mesh.mesh)),
@@ -150,10 +174,40 @@ fn setup_map(
 
     commands.insert_resource(map);
 
+    // Test patches
+    let test_patch = wad.load_picture(wad.find_patch(WadName::from_slice(b"DOOR2_1"))?)?;
+    // println!("{:?}", test_patch);
+    let test_patch_image = test_patch.to_image(&doom_palette);
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(100.0, 100.0, 100.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color_texture: Some(images.add(test_patch_image)),
+            unlit: true,
+            ..default()
+        })),
+    ));
+
+    let test_texture = textures
+        .iter()
+        .find(|t| t.name == WadName::from_slice(b"BIGDOOR1"))
+        .unwrap(); // BIGDOOR1 broken
+    println!("{}", test_texture.name);
+    let test_texture_image = test_texture.to_image(&doom_palette);
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(100.0, 100.0, 100.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color_texture: Some(images.add(test_texture_image)),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        })),
+        Transform::from_xyz(200.0, 0.0, 0.0),
+    ));
+
     Ok(())
 }
 
-fn setup_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, map: Res<Map>) {
+fn setup_game_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, map: Res<Map>) {
     let canvas_size = Extent3d {
         width: GAME_WIDTH,
         height: GAME_HEIGHT,
@@ -192,7 +246,7 @@ fn setup_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, map: 
             ..default()
         },
         Projection::Perspective(PerspectiveProjection {
-            fov: 90.0_f32.to_radians(),
+            fov: (90.0 * (GAME_HEIGHT as f32 / GAME_WIDTH as f32)).to_radians(),
             near: 4.0,
             far: 16000.0,
             ..Default::default()
@@ -213,7 +267,7 @@ fn setup_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, map: 
         },
         RenderTarget::Image(image_handle.clone().into()),
         Msaa::Off,
-        PIXEL_PERFECT_LAYERS,
+        GAME_RENDER_LAYERS,
     ));
 
     commands.spawn((
@@ -224,8 +278,10 @@ fn setup_camera(mut commands: Commands, mut images: ResMut<Assets<Image>>, map: 
             image_mode: SpriteImageMode::Auto,
             ..default()
         },
-        HIGH_RES_LAYERS,
+        NATIVE_RENDER_LAYERS,
     ));
+}
 
-    commands.spawn((OuterCamera, Camera2d, Msaa::Off, HIGH_RES_LAYERS));
+fn setup_native_camera(mut commands: Commands) {
+    commands.spawn((NativeCamera, Camera2d, Msaa::Sample8, NATIVE_RENDER_LAYERS));
 }

@@ -1,6 +1,9 @@
+use crate::DoomPalette;
+
 use std::fmt;
 
-use bevy::math::IVec2;
+use anyhow::Context;
+use bevy::{image::Image, math::IVec2};
 use bytemuck::{Pod, Zeroable};
 
 // WAD TYPE
@@ -14,7 +17,7 @@ pub enum WadType {
 // WAD NAME
 
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Zeroable, Pod)]
 pub struct WadName([u8; 8]);
 
 impl WadName {
@@ -43,6 +46,12 @@ impl WadName {
     }
 }
 
+impl From<[u8; 8]> for WadName {
+    fn from(r: [u8; 8]) -> Self {
+        Self::from_slice(&r)
+    }
+}
+
 impl fmt::Display for WadName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -59,7 +68,7 @@ impl fmt::Debug for WadName {
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Zeroable, Pod, Debug)]
-pub struct RawHeader {
+pub struct RawWadHeader {
     pub magic: [u8; 4],
     pub num_lumps: i32,
     pub directory_offset: i32,
@@ -69,9 +78,9 @@ pub struct RawHeader {
 
 #[derive(Clone, Copy, Debug)]
 pub struct LumpEntry {
+    pub name: WadName,
     pub offset: usize,
     pub size: usize,
-    pub name: WadName,
 }
 
 impl LumpEntry {
@@ -200,8 +209,8 @@ impl Sidedef {
         Self {
             offset: IVec2::new(r.x_offset as i32, r.y_offset as i32), // TODO: Check coords
             upper_texture: WadName::from_slice(&r.upper_texture),
-            lower_texture: WadName::from_slice(&r.upper_texture),
-            middle_texture: WadName::from_slice(&r.upper_texture),
+            lower_texture: WadName::from_slice(&r.lower_texture),
+            middle_texture: WadName::from_slice(&r.middle_texture),
             sector_i: r.sector_i as u32,
         }
     }
@@ -293,7 +302,214 @@ pub struct RawSector {
     pub tag: u16,
 }
 
+// FLAT
+
+#[derive(Clone, Debug)]
+pub struct Flat {
+    pub data: [u8; 64 * 64],
+}
+
+impl Flat {
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        Ok(Self {
+            data: bytes.try_into().context("Flat is not 64 by 64.")?,
+        })
+    }
+
+    pub fn to_image(&self, palette: &DoomPalette) -> Image {
+        let mut image_data = Vec::with_capacity(64 * 64 * 4);
+        for pixel in &self.data {
+            let color = palette.0[*pixel as usize];
+            image_data.extend([color.r, color.g, color.b, 255]);
+        }
+        Image::new(
+            bevy::render::render_resource::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            image_data,
+            bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+        )
+    }
+}
+
+// PICTURE
+
+#[derive(Clone, Debug)]
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pub offset: IVec2,
+    pub data: Vec<Option<u8>>,
+}
+
+impl Picture {
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let header_size = std::mem::size_of::<RawPictureHeader>();
+        let header: &RawPictureHeader = bytemuck::try_from_bytes(&bytes[0..header_size])?;
+        let mut picture = Picture {
+            width: header.width as u32,
+            height: header.height as u32,
+            offset: IVec2::new(header.left_offset as i32, header.top_offset as i32),
+            data: vec![None; header.width as usize * header.height as usize],
+        };
+
+        let column_offsets: &[UnalignedU32] = bytemuck::try_cast_slice(
+            &bytes[header_size..(header_size + picture.width as usize * 4)],
+        )?;
+
+        for (column_i, column_offset) in column_offsets.into_iter().enumerate() {
+            let mut post_offset = column_offset.0 as usize;
+
+            loop {
+                // Loop through posts
+                let post_top_delta = bytes[post_offset];
+                if post_top_delta == 255 {
+                    break;
+                }
+
+                let post_data_length = bytes[post_offset + 1];
+                let post_data_offset = post_offset + 3;
+                let post_data =
+                    &bytes[post_data_offset..post_data_offset + post_data_length as usize];
+                for (post_i, pixel) in post_data.into_iter().enumerate() {
+                    let image_index =
+                        (post_top_delta as usize + post_i) * picture.width as usize + column_i;
+                    picture.data[image_index] = Some(*pixel);
+                }
+
+                post_offset += 4 + post_data_length as usize; // 2 extra unused bytes
+            }
+        }
+
+        Ok(picture)
+    }
+
+    pub fn to_image(&self, palette: &DoomPalette) -> Image {
+        let mut image_data = Vec::with_capacity((self.width * self.height) as usize * 4);
+        for pixel_option in &self.data {
+            if let Some(pixel) = pixel_option {
+                // Not transparent
+                let color = palette.0[*pixel as usize];
+                image_data.extend([color.r, color.g, color.b, 255]);
+            } else {
+                image_data.extend([0, 0, 0, 0]);
+            }
+        }
+        Image::new(
+            bevy::render::render_resource::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            image_data,
+            bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+        )
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
+pub struct RawPictureHeader {
+    pub width: u16,
+    pub height: u16,
+    pub left_offset: i16,
+    pub top_offset: i16,
+}
+
+// TEXTURE
+
+#[derive(Clone, Debug)]
+pub struct Texture {
+    pub name: WadName,
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<Option<u8>>,
+}
+
+impl Texture {
+    pub fn to_image(&self, palette: &DoomPalette) -> Image {
+        let mut image_data = Vec::with_capacity((self.width * self.height) as usize * 4);
+        for pixel_option in &self.data {
+            if let Some(pixel) = pixel_option {
+                // Not transparent
+                let color = palette.0[*pixel as usize];
+                image_data.extend([color.r, color.g, color.b, 255]);
+            } else {
+                image_data.extend([0, 0, 0, 0]);
+            }
+        }
+        Image::new(
+            bevy::render::render_resource::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            image_data,
+            bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+            bevy::asset::RenderAssetUsages::RENDER_WORLD,
+        )
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
+pub struct RawTextureHeader {
+    pub name: [u8; 8],
+    pub _masked: u32,
+    pub width: u16,
+    pub height: u16,
+    pub _column_directory: u32,
+    pub num_patches: u16,
+}
+
+// PATCH
+
+#[derive(Clone, Copy, Debug)]
+pub struct Patch {
+    pub offset: IVec2,
+    pub pname_i: u32,
+}
+
+impl Patch {
+    pub fn from_raw(r: RawPatch) -> Self {
+        Self {
+            offset: IVec2::new(r.offset_x as i32, r.offset_y as i32),
+            pname_i: r.patch as u32,
+        }
+    }
+}
+
+impl From<RawPatch> for Patch {
+    fn from(r: RawPatch) -> Self {
+        Self::from_raw(r)
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
+pub struct RawPatch {
+    pub offset_x: i16,
+    pub offset_y: i16,
+    pub patch: u16,
+    pub _step_dir: i16,
+    pub _colormap: u16,
+}
+
 // HELPER FUNCTIONS
+
+pub fn bytes_to_vec<T: From<R>, R: Pod>(bytes: &[u8]) -> anyhow::Result<Vec<T>> {
+    Ok(bytemuck::try_cast_slice(bytes)?
+        .iter()
+        .map(|&r| T::from(r))
+        .collect())
+}
 
 fn from_doom_coords(x: i16, y: i16) -> IVec2 {
     // Flip Y from north to south
@@ -307,3 +523,7 @@ fn from_doom_angle(angle: i16) -> f32 {
     let rounded = (realign / 45.0).round();
     rounded * std::f32::consts::FRAC_PI_4
 }
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Zeroable, Pod, Debug)]
+pub struct UnalignedU32(pub u32);
