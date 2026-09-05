@@ -1,5 +1,5 @@
 use crate::{
-    DoomPalette,
+    ATTRIBUTE_SECTOR_INDEX, DoomPalette,
     wad::{WadFile, types::*},
 };
 
@@ -65,14 +65,17 @@ impl Map {
         wad: &WadFile,
         textures: &[Texture],
         palette: &DoomPalette,
-    ) -> anyhow::Result<MapMesh> {
+    ) -> anyhow::Result<(MapMesh, Vec<[f32; 2]>)> {
         let walls = self.build_walls_mesh(textures, palette);
-        let (floors, ceilings) = self.build_floors_ceilings_meshes(wad, palette)?;
-        Ok(MapMesh {
-            walls,
-            floors,
-            ceilings,
-        })
+        let (floors, ceilings, sector_heights) = self.build_floors_ceilings_meshes(wad, palette)?;
+        Ok((
+            MapMesh {
+                walls,
+                floors,
+                ceilings,
+            },
+            sector_heights,
+        ))
     }
 
     fn build_walls_mesh(&self, textures: &[Texture], palette: &DoomPalette) -> Vec<TexturedMesh> {
@@ -127,6 +130,10 @@ impl Map {
             add_quad(new_vertices, color)
         };
 
+        let mut image_sampler_descriptor = bevy::image::ImageSamplerDescriptor::nearest();
+        image_sampler_descriptor.set_address_mode(bevy::image::ImageAddressMode::Repeat);
+        let image_sampler = bevy::image::ImageSampler::Descriptor(image_sampler_descriptor);
+
         let mut meshes = Vec::with_capacity(self.linedefs.len());
 
         for linedef in &self.linedefs {
@@ -162,7 +169,7 @@ impl Map {
                         };
                     let (vertices, vertex_colors, indices) =
                         add_wall(a, b, c, d, [1.0, 1.0, 1.0, 1.0]);
-                    let image = if let Some(texture) = textures.iter().find(|t| t.name == e) {
+                    let mut image = if let Some(texture) = textures.iter().find(|t| t.name == e) {
                         texture.to_image(palette)
                     } else {
                         Image::new(
@@ -177,6 +184,7 @@ impl Map {
                             bevy::asset::RenderAssetUsages::RENDER_WORLD,
                         )
                     };
+                    image.sampler = image_sampler.clone();
                     meshes.push(TexturedMesh::new(
                         Mesh::new(
                             PrimitiveTopology::TriangleList,
@@ -185,7 +193,7 @@ impl Map {
                         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::from(vertices))
                         .with_inserted_attribute(
                             Mesh::ATTRIBUTE_UV_0,
-                            vec![[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+                            vec![[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
                         )
                         .with_inserted_indices(Indices::U32(Vec::from(indices))),
                         image,
@@ -213,7 +221,7 @@ impl Map {
                     };
                     let (vertices, vertex_colors, indices) =
                         add_wall(a, b, c, d, [1.0, 1.0, 1.0, 1.0]);
-                    let image = if let Some(texture) = textures.iter().find(|t| t.name == e) {
+                    let mut image = if let Some(texture) = textures.iter().find(|t| t.name == e) {
                         texture.to_image(palette)
                     } else {
                         Image::new(
@@ -228,6 +236,7 @@ impl Map {
                             bevy::asset::RenderAssetUsages::RENDER_WORLD,
                         )
                     };
+                    image.sampler = image_sampler.clone();
                     meshes.push(TexturedMesh::new(
                         Mesh::new(
                             PrimitiveTopology::TriangleList,
@@ -236,7 +245,7 @@ impl Map {
                         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::from(vertices))
                         .with_inserted_attribute(
                             Mesh::ATTRIBUTE_UV_0,
-                            vec![[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+                            vec![[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
                         )
                         .with_inserted_indices(Indices::U32(Vec::from(indices))),
                         image,
@@ -256,7 +265,7 @@ impl Map {
                     sector.floor_height,
                     [1.0, 1.0, 1.0, 1.0],
                 );
-                let image = if let Some(texture) =
+                let mut image = if let Some(texture) =
                     textures.iter().find(|t| t.name == sidedef.middle_texture)
                 {
                     texture.to_image(palette)
@@ -273,6 +282,7 @@ impl Map {
                         bevy::asset::RenderAssetUsages::RENDER_WORLD,
                     )
                 };
+                image.sampler = image_sampler.clone();
                 meshes.push(TexturedMesh::new(
                     Mesh::new(
                         PrimitiveTopology::TriangleList,
@@ -281,7 +291,7 @@ impl Map {
                     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::from(vertices))
                     .with_inserted_attribute(
                         Mesh::ATTRIBUTE_UV_0,
-                        vec![[1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
+                        vec![[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
                     )
                     .with_inserted_indices(Indices::U32(Vec::from(indices))),
                     image,
@@ -304,7 +314,7 @@ impl Map {
         &self,
         wad: &WadFile,
         palette: &DoomPalette,
-    ) -> anyhow::Result<(Vec<TexturedMesh>, Vec<TexturedMesh>)> {
+    ) -> anyhow::Result<(Vec<TexturedMesh>, Vec<TexturedMesh>, Vec<[f32; 2]>)> {
         let num_sectors = self.sectors.len();
 
         #[derive(Clone, Copy)]
@@ -467,8 +477,12 @@ impl Map {
         let mut floors_visited = vec![false; num_sectors];
         let mut ceilings_visited = vec![false; num_sectors];
 
+        let mut sector_heights = Vec::with_capacity(num_sectors);
+
         for sector_i in 0..num_sectors {
             let sector = self.sectors[sector_i];
+
+            sector_heights.push([sector.floor_height as f32, sector.ceiling_height as f32]);
 
             // Floor mesh
             if !floors_visited[sector_i] {
@@ -481,7 +495,7 @@ impl Map {
                 let floor_texture_name = sector.floor_texture;
 
                 // Visit all sectors with the same floor texture
-                for new_i in sector_i..num_sectors {
+                for new_i in sector_i..sector_i+1 {
                     let new_sector = self.sectors[new_i];
                     if new_sector.floor_texture != floor_texture_name {
                         continue;
@@ -492,7 +506,8 @@ impl Map {
                     let new_vertices: Vec<[f32; 3]> = triangulated_sectors[new_i]
                         .0
                         .iter()
-                        .map(|v| [v[0], floor_height, v[1]])
+                        // .map(|v| [v[0], floor_height, v[1]])
+                        .map(|v| [v[0], 0.0, v[1]])
                         .collect();
                     let new_uvs: Vec<[f32; 2]> = triangulated_sectors[new_i].1.clone();
                     let index_offset = vertices.len() as u32;
@@ -508,12 +523,18 @@ impl Map {
                     indices.extend(new_indices);
                 }
 
+                let num_vertices = vertices.len();
+
                 let floor_mesh = Mesh::new(
                     PrimitiveTopology::TriangleList,
                     RenderAssetUsages::RENDER_WORLD,
                 )
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+                .with_inserted_attribute(
+                    ATTRIBUTE_SECTOR_INDEX,
+                    vec![sector_i as u32; num_vertices],
+                )
                 .with_inserted_indices(Indices::U32(indices));
 
                 // Floor texture
@@ -536,7 +557,7 @@ impl Map {
                 let ceiling_texture_name = sector.ceiling_texture;
 
                 // Visit all sectors with the same ceiling texture
-                for new_i in sector_i..num_sectors {
+                for new_i in sector_i..sector_i+1 {
                     let new_sector = self.sectors[new_i];
                     if new_sector.ceiling_texture != ceiling_texture_name {
                         continue;
@@ -547,7 +568,8 @@ impl Map {
                     let new_vertices: Vec<[f32; 3]> = triangulated_sectors[new_i]
                         .0
                         .iter()
-                        .map(|v| [v[0], ceiling_height, v[1]])
+                        // .map(|v| [v[0], ceiling_height, v[1]])
+                        .map(|v| [v[0], 1.0, v[1]])
                         .collect();
                     let new_uvs: Vec<[f32; 2]> = triangulated_sectors[new_i].1.clone();
                     let index_offset = vertices.len() as u32;
@@ -562,12 +584,18 @@ impl Map {
                     indices.extend(new_indices);
                 }
 
+                let num_vertices = vertices.len();
+
                 let ceiling_mesh = Mesh::new(
                     PrimitiveTopology::TriangleList,
                     RenderAssetUsages::RENDER_WORLD,
                 )
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+                .with_inserted_attribute(
+                    ATTRIBUTE_SECTOR_INDEX,
+                    vec![sector_i as u32; num_vertices],
+                )
                 .with_inserted_indices(Indices::U32(indices));
 
                 // Ceiling texture
@@ -580,6 +608,6 @@ impl Map {
             }
         }
 
-        Ok((floors_out, ceilings_out))
+        Ok((floors_out, ceilings_out, sector_heights))
     }
 }

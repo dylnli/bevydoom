@@ -8,24 +8,22 @@ use crate::{
 
 use anyhow::anyhow;
 use bevy::{
-    camera::{RenderTarget, visibility::RenderLayers},
-    camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
-    prelude::*,
-    render::render_resource::{
-        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-    },
-    window::WindowResolution,
-    winit::WinitSettings,
+    camera::{RenderTarget, visibility::RenderLayers}, camera_controller::free_camera::{FreeCamera, FreeCameraPlugin}, mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef, VertexFormat}, pbr::{MaterialPipeline, MaterialPipelineKey}, prelude::*, render::{
+        render_resource::{
+            AsBindGroup, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages
+        },
+        storage::ShaderStorageBuffer,
+    }, shader::ShaderRef, window::WindowResolution, winit::WinitSettings
 };
 
 #[derive(Resource)]
 struct CommandLineArgs(Vec<String>);
 
-const WINDOW_WIDTH: u32 = 800;
-const WINDOW_HEIGHT: u32 = 600;
+const WINDOW_WIDTH: u32 = 1600;
+const WINDOW_HEIGHT: u32 = 1200;
 
-const GAME_WIDTH: u32 = 800;
-const GAME_HEIGHT: u32 = 500;
+const GAME_WIDTH: u32 = 1600;
+const GAME_HEIGHT: u32 = 1000;
 
 const GAME_RENDER_LAYERS: RenderLayers = RenderLayers::layer(0);
 const NATIVE_RENDER_LAYERS: RenderLayers = RenderLayers::layer(1);
@@ -57,6 +55,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(FreeCameraPlugin)
+        .add_plugins(MaterialPlugin::<FlatMaterial>::default())
         .insert_resource(CommandLineArgs(args))
         .add_systems(
             Startup,
@@ -104,10 +103,53 @@ fn setup_wad(mut commands: Commands, args: Res<CommandLineArgs>) -> Result {
     Ok(())
 }
 
+const ATTRIBUTE_SECTOR_INDEX: MeshVertexAttribute =
+    MeshVertexAttribute::new("SectorIndex", 988540917, VertexFormat::Uint32);
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+struct FlatMaterial {
+    #[uniform(0)]
+    color: LinearRgba,
+    #[storage(1, read_only)]
+    sector_heights: Handle<ShaderStorageBuffer>,
+    #[texture(2)]
+    #[sampler(3)]
+    texture: Handle<Image>,
+}
+
+const SHADER_ASSET_PATH: &str = "shaders/test.wgsl";
+
+impl Material for FlatMaterial {
+    fn vertex_shader() -> ShaderRef {
+        SHADER_ASSET_PATH.into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        SHADER_ASSET_PATH.into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let vertex_layout = layout.0.get_layout(&[
+            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
+            ATTRIBUTE_SECTOR_INDEX.at_shader_location(1),
+            Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
+        ])?;
+        descriptor.vertex.buffers = vec![vertex_layout];
+        Ok(())
+    }
+}
+
 fn setup_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut flat_materials: ResMut<Assets<FlatMaterial>>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
     mut images: ResMut<Assets<Image>>,
     wad: Res<WadFile>,
 ) -> Result {
@@ -138,7 +180,7 @@ fn setup_map(
     //     Mesh3d(meshes.add(map_mesh.walls)),
     //     MeshMaterial3d(unlit_material.clone()),
     // ));
-    for textured_mesh in map_mesh.walls {
+    for textured_mesh in map_mesh.0.walls {
         commands.spawn((
             Mesh3d(meshes.add(textured_mesh.mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
@@ -149,25 +191,42 @@ fn setup_map(
             })),
         ));
     }
-    for textured_mesh in map_mesh.floors {
+    let sector_heights_buffer = buffers.add(ShaderStorageBuffer::from(map_mesh.1));
+    for textured_mesh in map_mesh.0.floors {
+        // commands.spawn((
+        //     Mesh3d(meshes.add(textured_mesh.mesh)),
+        //     MeshMaterial3d(materials.add(StandardMaterial {
+        //         base_color: Color::WHITE,
+        //         base_color_texture: Some(images.add(textured_mesh.texture)),
+        //         unlit: true,
+        //         ..default()
+        //     })),
+        // ));
         commands.spawn((
             Mesh3d(meshes.add(textured_mesh.mesh)),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                base_color_texture: Some(images.add(textured_mesh.texture)),
-                unlit: true,
-                ..default()
+            MeshMaterial3d(flat_materials.add(FlatMaterial {
+                color: LinearRgba::rgb(1.0, 1.0, 0.0),
+                sector_heights: sector_heights_buffer.clone(),
+                texture: images.add(textured_mesh.texture),
             })),
         ));
     }
-    for textured_mesh in map_mesh.ceilings {
+    for textured_mesh in map_mesh.0.ceilings {
+        // commands.spawn((
+        //     Mesh3d(meshes.add(textured_mesh.mesh)),
+        //     MeshMaterial3d(materials.add(StandardMaterial {
+        //         base_color: Color::WHITE,
+        //         base_color_texture: Some(images.add(textured_mesh.texture)),
+        //         unlit: true,
+        //         ..default()
+        //     })),
+        // ));
         commands.spawn((
             Mesh3d(meshes.add(textured_mesh.mesh)),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                base_color_texture: Some(images.add(textured_mesh.texture)),
-                unlit: true,
-                ..default()
+            MeshMaterial3d(flat_materials.add(FlatMaterial {
+                color: LinearRgba::rgb(1.0, 1.0, 0.0),
+                sector_heights: sector_heights_buffer.clone(),
+                texture: images.add(textured_mesh.texture),
             })),
         ));
     }
@@ -175,34 +234,34 @@ fn setup_map(
     commands.insert_resource(map);
 
     // Test patches
-    let test_patch = wad.load_picture(wad.find_patch(WadName::from_slice(b"DOOR2_1"))?)?;
-    // println!("{:?}", test_patch);
-    let test_patch_image = test_patch.to_image(&doom_palette);
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(100.0, 100.0, 100.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(images.add(test_patch_image)),
-            unlit: true,
-            ..default()
-        })),
-    ));
+    // let test_patch = wad.load_picture(wad.find_patch(WadName::from_slice(b"DOOR2_1"))?)?;
+    // // println!("{:?}", test_patch);
+    // let test_patch_image = test_patch.to_image(&doom_palette);
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Cuboid::new(100.0, 100.0, 100.0))),
+    //     MeshMaterial3d(materials.add(StandardMaterial {
+    //         base_color_texture: Some(images.add(test_patch_image)),
+    //         unlit: true,
+    //         ..default()
+    //     })),
+    // ));
 
-    let test_texture = textures
-        .iter()
-        .find(|t| t.name == WadName::from_slice(b"BIGDOOR1"))
-        .unwrap(); // BIGDOOR1 broken
-    println!("{}", test_texture.name);
-    let test_texture_image = test_texture.to_image(&doom_palette);
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(100.0, 100.0, 100.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(images.add(test_texture_image)),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        })),
-        Transform::from_xyz(200.0, 0.0, 0.0),
-    ));
+    // let test_texture = textures
+    //     .iter()
+    //     .find(|t| t.name == WadName::from_slice(b"BIGDOOR1"))
+    //     .unwrap(); // BIGDOOR1 broken
+    // println!("{}", test_texture.name);
+    // let test_texture_image = test_texture.to_image(&doom_palette);
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Cuboid::new(100.0, 100.0, 100.0))),
+    //     MeshMaterial3d(materials.add(StandardMaterial {
+    //         base_color_texture: Some(images.add(test_texture_image)),
+    //         unlit: true,
+    //         alpha_mode: AlphaMode::Blend,
+    //         ..default()
+    //     })),
+    //     Transform::from_xyz(200.0, 0.0, 0.0),
+    // ));
 
     Ok(())
 }
